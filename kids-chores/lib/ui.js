@@ -297,6 +297,35 @@ export function toggleField(label, checked) {
   return { wrap, input };
 }
 
+export function boardSignature(data) {
+  const boards = Array.isArray(data?.boards) && data.boards.length
+    ? data.boards
+    : [{ userId: data?.viewerId, items: data?.items, goalReached: data?.goalReached }];
+  return JSON.stringify(boards.map((board) => [
+    board.userId,
+    board.goalReached === true,
+    (board.items || []).map((item) => [item?.id, item?.done === true, item?.locked === true]),
+  ]));
+}
+
+/** While an administrator keeps Kids Chores open, send queued Homey calls. */
+export function watchAdmin(container, token, role, signal, load) {
+  clearInterval(container._kcPoll);
+  if (role !== 'admin') return;
+  const timer = setInterval(() => {
+    if (container._kcToken !== token || signal?.aborted) {
+      clearInterval(timer);
+      return;
+    }
+    if (typeof document !== 'undefined' && document.hidden) return;
+    void load();
+  }, 4000);
+  container._kcPoll = timer;
+  signal?.addEventListener?.('abort', () => {
+    if (container._kcPoll === timer) clearInterval(timer);
+  }, { once: true });
+}
+
 export function button(label, className, signal, onClick) {
   const el = document.createElement('button');
   el.type = 'button';

@@ -53,7 +53,8 @@ function writeDocument(doc) {
  * Yuvomi's page may only call its own origin. A Homey address is refused
  * by the browser before the POST exists, which used to look like a finished
  * chore with no trigger. Ask Yuvomi to POST the same JSON, then drop the
- * temporary channel.
+ * temporary channel. Only an administrator can create that channel. A member
+ * check-off stores the same JSON for the next administrator session.
  */
 async function relayWebhook(url, payload) {
   if (typeof document === 'undefined') return false;
@@ -109,6 +110,7 @@ function isAbsent(status, body) {
 export function createClient(options = {}) {
   const loadApi = options.loadApi || (() => import('/api.js'));
   const clock = options.now || (() => new Date());
+  const relay = typeof options.relay === 'function' ? options.relay : relayWebhook;
   let csrfToken = '';
   let seeded = false;
 
@@ -119,6 +121,16 @@ export function createClient(options = {}) {
       if (err?.name === 'AbortError') throw err;
       if (await relayWebhook(url, payload)) return { status: 204, body: '' };
       throw err;
+    }
+  }
+
+  async function sendForHousehold(url, payload, signal) {
+    try {
+      return await postWebhook(url, payload, signal);
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      if (await relay(url, payload)) return { status: 204, body: '' };
+      return null;
     }
   }
 
@@ -229,7 +241,7 @@ export function createClient(options = {}) {
         signal,
         actor,
         now: clock(),
-        postWebhook: (url, payload) => deliverWebhook(url, payload, signal),
+        trySend: (url, payload) => sendForHousehold(url, payload, signal),
         readLocal: readDocument,
         writeLocal: writeDocument,
       });

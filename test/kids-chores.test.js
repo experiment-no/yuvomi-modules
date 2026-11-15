@@ -859,6 +859,8 @@ test('a generic chore saved by an administrator is visible to other members thro
     assert.equal(state.visibility, 'all');
     assert.equal(state.content.includes(HOMEY), true);
     assert.equal(state.content.includes('"assigneeIds":[]'), true);
+    const log = notes.find((note) => String(note.created_by) === '2');
+    assert.equal(log.content.includes('"pending"'), false);
   } finally {
     globalThis.localStorage = previousStorage;
     globalThis.fetch = previousFetch;
@@ -910,6 +912,112 @@ test('chores already stored in this browser are copied into the household note',
     assert.equal(member.items[0].title, 'Tømme sekken');
     assert.equal(member.items[0].done, false);
     assert.equal(notes.some((note) => note.content.includes(STATE_MARK)), true);
+  } finally {
+    globalThis.localStorage = previousStorage;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('a member check-off is saved and an administrator session sends the same webhook', async () => {
+  const notes = [];
+  const writes = [];
+  const sent = [];
+  let who = { id: 1, role: 'admin', name: 'Ada' };
+  const api = fakeNotes(notes, writes, () => who);
+  const storage = memoryStorage();
+  const previousStorage = globalThis.localStorage;
+  const previousFetch = globalThis.fetch;
+  globalThis.localStorage = storage;
+  globalThis.fetch = async () => { throw new TypeError('network'); };
+  const clientFor = (relay) => createClient({
+    loadApi: async () => ({ api }),
+    now: () => FRIDAY,
+    relay,
+  });
+  const payload = { event: 'ella_checkin', state: 'yes', done: true, points: 5 };
+  try {
+    const admin = clientFor(async (url, body) => {
+      sent.push({ url, payload: body });
+      return true;
+    });
+    const generic = await admin.createChore({
+      title: 'Tømme sekken',
+      points: 5,
+      days: [5],
+      assigneeIds: [],
+      webhookUrl: HOMEY,
+    });
+    const own = await admin.complete(generic.chore.id);
+    assert.equal(own.items.find((item) => item.title === 'Tømme sekken').done, true);
+    assert.deepEqual(sent, [{ url: HOMEY, payload }]);
+    const adminLog = notes.find((note) => String(note.created_by) === '1');
+    assert.equal(adminLog.content.includes('"pending"'), false);
+
+    who = { id: 2, role: 'member', name: 'Bea' };
+    let memberTries = 0;
+    const child = clientFor(async () => {
+      memberTries += 1;
+      return false;
+    });
+    const done = await child.complete(generic.chore.id);
+    assert.equal(done.items.find((item) => item.title === 'Tømme sekken').done, true);
+    assert.equal(memberTries, 1);
+    assert.equal(sent.length, 1);
+    const childLog = notes.find((note) => String(note.created_by) === '2');
+    const stored = JSON.parse(childLog.content.split('\n').slice(2).join('\n'));
+    assert.equal(stored.pending.length, 1);
+    assert.equal(stored.pending[0].url, HOMEY);
+    assert.deepEqual(stored.pending[0].payload, payload);
+    assert.equal(writes.some((write) => write.userId === 2 && write.content.includes(STATE_MARK)), false);
+
+    who = { id: 1, role: 'admin', name: 'Ada' };
+    await admin.today();
+    assert.deepEqual(sent, [{ url: HOMEY, payload }, { url: HOMEY, payload }]);
+    const cleared = JSON.parse(notes.find((note) => String(note.created_by) === '2').content.split('\n').slice(2).join('\n'));
+    assert.equal(cleared.pending, undefined);
+    await admin.today();
+    assert.equal(sent.length, 2);
+  } finally {
+    globalThis.localStorage = previousStorage;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('an explicit Homey refusal still blocks a member check-off', async () => {
+  const notes = [];
+  const writes = [];
+  let who = { id: 1, role: 'admin', name: 'Ada' };
+  const api = fakeNotes(notes, writes, () => who);
+  const storage = memoryStorage();
+  const previousStorage = globalThis.localStorage;
+  const previousFetch = globalThis.fetch;
+  globalThis.localStorage = storage;
+  globalThis.fetch = async (url) => {
+    if (String(url).startsWith('https://webhooks.athom.com/')) {
+      return { ok: true, status: 200, text: async () => '{"state":"no"}' };
+    }
+    throw new TypeError('network');
+  };
+  const clientFor = () => createClient({
+    loadApi: async () => ({ api }),
+    now: () => FRIDAY,
+    relay: async () => false,
+  });
+  try {
+    const created = await clientFor().createChore({
+      title: 'Tømme sekken',
+      points: 5,
+      days: [5],
+      assigneeIds: [],
+      webhookUrl: HOMEY,
+    });
+    who = { id: 2, role: 'member', name: 'Bea' };
+    await assert.rejects(
+      () => clientFor().complete(created.chore.id),
+      (err) => err instanceof KidsChoresError && err.reason === 'webhook_denied',
+    );
+    const log = notes.find((note) => String(note.created_by) === '2');
+    assert.equal(log, undefined);
   } finally {
     globalThis.localStorage = previousStorage;
     globalThis.fetch = previousFetch;
