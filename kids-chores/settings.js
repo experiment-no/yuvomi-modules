@@ -475,6 +475,7 @@ function hint(text) {
 function assignmentLabel(chore, data) {
   if (data.settings?.shareAcrossUsers === false) return '';
   if (chore?.assigneeIds == null) return tr('chores.forEveryone');
+  if (!chore.assigneeIds.length) return tr('chores.generic');
   const members = Array.isArray(data.members) ? data.members : [];
   const ids = new Set(chore.assigneeIds.map(String));
   const names = members.filter((member) => ids.has(member.id)).map((member) => member.name);

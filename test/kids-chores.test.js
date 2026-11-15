@@ -720,6 +720,30 @@ test('a child only sees their own chores, and a parent follows the children they
   assert.equal(adaLegacy.items[0].done, true);
 });
 
+test('a chore with nobody checked is generic and shows for every member', async () => {
+  let state = defaultState();
+  const created = await ask(state, 'POST', '/chores', {
+    title: 'Søppel',
+    points: 1,
+    days: [5],
+    assigneeIds: [],
+  });
+  state = created.state;
+  assert.deepEqual(created.body.chore.assigneeIds, []);
+  const ada = await ask(state, 'GET', '/today');
+  const bea = await ask(state, 'GET', '/today', undefined, member);
+  assert.equal(ada.body.items.some((item) => item.title === 'Søppel'), true);
+  assert.equal(bea.body.items.some((item) => item.title === 'Søppel'), true);
+  const done = await ask(state, 'POST', '/complete', { id: created.body.chore.id }, member);
+  assert.equal(done.body.items[0].done, true);
+  const adaAfter = await ask(done.state, 'GET', '/today');
+  assert.equal(adaAfter.body.items[0].done, false);
+  const follow = await ask(done.state, 'PUT', '/settings', { followingIds: ['b'] });
+  const boards = (await ask(follow.state, 'GET', '/today')).body.boards;
+  const shown = boards.filter((board) => board.items.some((item) => item.title === 'Søppel'));
+  assert.deepEqual(shown.map((board) => board.userId), ['a']);
+});
+
 test('sharing off keeps one list per account, and the same account is one list', async () => {
   const doc = openDocument({
     settings: { shareAcrossUsers: false },

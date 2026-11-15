@@ -255,19 +255,23 @@ export function doneFor(entry, userId) {
 
 /**
  * Who has this chore on their own list. Sharing off shows the account's list.
- * A chore with no assignee list is an older chore and still shows for everyone,
- * except ids in `excludedMemberIds`. A list, including an empty one, is exact.
- * Follow boards skip those older chores so a parent does not see them twice.
+ * No assignee list means a generic chore: it is not tied to a child, and every
+ * member sees it on their own list. An older chore with a missing list does the
+ * same, except ids in `excludedMemberIds`. A non-empty list is only those people.
+ * Follow boards skip generic chores so a parent does not see them twice.
  */
 export function choreFor(chore, settings, userId, options = {}) {
   if (settings?.shareAcrossUsers === false) return true;
   const assigned = copyAssigneeIds(chore?.assigneeIds);
   const id = userId == null || userId === '' ? '' : String(userId);
-  if (assigned == null) {
+  if (assigned == null || assigned.length === 0) {
     if (options.legacy === 'skip') return false;
-    const excluded = cleanMemberIds(chore?.excludedMemberIds);
-    if (!excluded.length || !id) return true;
-    return !excluded.includes(id);
+    if (assigned == null) {
+      const excluded = cleanMemberIds(chore?.excludedMemberIds);
+      if (!excluded.length || !id) return true;
+      return !excluded.includes(id);
+    }
+    return true;
   }
   if (!id) return false;
   return assigned.includes(id);
