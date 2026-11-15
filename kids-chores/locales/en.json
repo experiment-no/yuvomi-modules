@@ -1,7 +1,7 @@
 {
   "menu": "Kids Chores",
   "module": "Kids Chores",
-  "settings.title": "Household setup",
+  "settings.title": "Kids Chores",
   "widgets.today": "Kids Chores",
   "page.score": "{{earned}} / {{goal}} points",
   "page.empty": "No chores today",

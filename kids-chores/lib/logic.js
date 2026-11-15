@@ -312,6 +312,40 @@ export function webhookEvent(url, fallback) {
   return fallback;
 }
 
+export function isAthomWebhook(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === 'webhooks.athom.com' || host === 'webhook.homey.app' || host.endsWith('.connect.athom.com');
+  } catch {
+    return false;
+  }
+}
+
+/** Body that matched a working Homey call: event, state, done, points. */
+export function choreWebhookPayload(chore, context) {
+  const event = webhookEvent(chore.webhookUrl, '');
+  if (event) {
+    return {
+      event,
+      state: 'yes',
+      done: true,
+      points: chore.points,
+    };
+  }
+  return {
+    state: 'yes',
+    done: true,
+    event: 'kids_chores.chore_completed',
+    module: 'kids-chores',
+    date: context.date,
+    choreId: chore.id,
+    title: chore.title,
+    points: chore.points,
+    timezone: context.timezone,
+    triggeredBy: context.triggeredBy,
+  };
+}
+
 export function parseWebhookUrl(value) {
   if (value == null) return { url: null };
   if (typeof value !== 'string') return { error: 'webhook' };
@@ -452,14 +486,33 @@ export function webhookDenied(status, body) {
   return false;
 }
 
+function explicitWebhookDenial(body) {
+  if (typeof body === 'number') return body < 0;
+  if (typeof body === 'string') {
+    const trimmed = body.trim();
+    if (!trimmed) return false;
+    const numeric = Number(trimmed);
+    return trimmed === String(numeric) && numeric < 0;
+  }
+  if (body && typeof body === 'object') {
+    if (body.ok === false) return true;
+    if (body.state === 'no') return true;
+    if (typeof body.state === 'number' && body.state < 0) return true;
+  }
+  return false;
+}
+
 async function callWebhook(postWebhook, url, payload) {
   if (!url) return { denied: false };
   if (typeof postWebhook !== 'function') return { denied: true };
   try {
     const result = await postWebhook(url, payload);
+    // Homey answers a delivered trigger with plain "ok", and sometimes with a
+    // status the browser can read as a failure. Only an explicit no blocks it.
+    if (isAthomWebhook(url)) return { denied: explicitWebhookDenial(result?.body) };
     return { denied: webhookDenied(result?.status, result?.body) };
   } catch {
-    return { denied: true };
+    return { denied: !isAthomWebhook(url) };
   }
 }
 
@@ -561,18 +614,11 @@ async function complete(next, original, request, actor, now) {
   if (locked) return fail(409, 'locked', actor, original);
 
   if (chore.webhookUrl) {
-    const reply = await callWebhook(request.postWebhook, chore.webhookUrl, {
-      state: 'yes',
-      done: true,
-      event: webhookEvent(chore.webhookUrl, 'kids_chores.chore_completed'),
-      module: 'kids-chores',
+    const reply = await callWebhook(request.postWebhook, chore.webhookUrl, choreWebhookPayload(chore, {
       date,
-      choreId: chore.id,
-      title: chore.title,
-      points: chore.points,
       timezone: next.settings.timezone,
       triggeredBy: actor.name || String(actor.id || ''),
-    });
+    }));
     if (reply.denied) return fail(409, 'webhook_denied', actor, original);
   }
 

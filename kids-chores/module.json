@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "kids-chores",
   "name": "Kids Chores",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "A household chore list for children. Points fill a sun or a star, and the list clears after midnight.",
   "entry": "index.js",
   "style": "style.css",

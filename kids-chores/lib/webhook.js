@@ -3,14 +3,7 @@
  * cookie is never sent to the reward URL. The URL itself is never logged.
  */
 
-function athomHost(url) {
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    return host === 'webhooks.athom.com' || host === 'webhook.homey.app' || host.endsWith('.connect.athom.com');
-  } catch {
-    return false;
-  }
-}
+import { isAthomWebhook } from './logic.js';
 
 export async function postWebhook(url, payload, signal) {
   let response;
@@ -28,7 +21,7 @@ export async function postWebhook(url, payload, signal) {
     // Athom answers a successful call with the plain text "ok". A page is
     // often not allowed to read that response. The POST was still delivered,
     // which is the call Postman can read. Do not send it a second time.
-    if (typeof document !== 'undefined' && athomHost(url)) return { status: 204, body: '' };
+    if (isAthomWebhook(url)) return { status: 204, body: '' };
     throw err;
   }
   const text = await response.text();

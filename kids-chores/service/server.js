@@ -207,7 +207,7 @@ export function createServer(options = {}) {
           body,
           actor,
           now: new Date(),
-          postWebhook: (target, payload) => postWebhook(target, payload, AbortSignal.timeout(4000)),
+          postWebhook: (target, payload) => postWebhook(target, payload, AbortSignal.timeout(15000)),
         });
         if (outcome.status < 400) {
           const before = JSON.stringify(loaded.state);
