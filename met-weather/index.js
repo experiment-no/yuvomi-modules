@@ -11,7 +11,6 @@ import {
   errorBody,
   hourLabel,
   icon,
-  listen,
   locale,
   paintIcons,
   showEmpty,
@@ -47,10 +46,10 @@ async function paint(container, signal, token) {
     return;
   }
   if (stopped(container, signal, token)) return;
-  showPage(container, data, signal);
+  showPage(container, data);
 }
 
-export function showPage(container, data, signal) {
+export function showPage(container, data) {
   const lang = locale();
   const root = document.createElement('div');
   root.className = 'mw-page';
@@ -81,7 +80,17 @@ export function showPage(container, data, signal) {
     body.append(columnHead());
     const list = document.createElement('div');
     list.className = 'mw-forecasts';
-    for (const day of days) list.append(dayRow(day, lang, signal));
+    for (const day of days) list.append(dayRow(day, lang));
+    list.addEventListener('click', (event) => {
+      const head = event.target.closest?.('button.mw-forecast__row');
+      if (!head || !list.contains(head)) return;
+      const panel = head.nextElementSibling;
+      if (!panel?.classList.contains('mw-forecast__hours')) return;
+      const next = head.getAttribute('aria-expanded') !== 'true';
+      head.setAttribute('aria-expanded', next ? 'true' : 'false');
+      panel.hidden = !next;
+      if (next) paintIcons(panel);
+    });
     body.append(list);
   }
   body.append(credit(data));
@@ -151,18 +160,16 @@ function columnHead() {
   return row;
 }
 
-function dayRow(day, lang, signal) {
+function dayRow(day, lang) {
   const article = document.createElement('article');
   article.className = 'mw-forecast';
   const hours = Array.isArray(day.hours) ? day.hours : [];
   const panelId = `mw-hours-${day.date}`;
-  const head = document.createElement(hours.length ? 'button' : 'div');
+  const head = document.createElement('button');
+  head.type = 'button';
   head.className = 'mw-forecast__row';
-  if (hours.length) {
-    head.type = 'button';
-    head.setAttribute('aria-expanded', 'false');
-    head.setAttribute('aria-controls', panelId);
-  }
+  head.setAttribute('aria-expanded', 'false');
+  head.setAttribute('aria-controls', panelId);
   const date = document.createElement('span');
   date.className = 'mw-forecast__date';
   date.textContent = dayHeading(day.date, lang);
@@ -195,21 +202,29 @@ function dayRow(day, lang, signal) {
   wind.className = 'mw-forecast__wind';
   wind.textContent = measure(day.wind, 'm/s', 0, lang);
   head.append(date, periods, temps, precip, wind);
-  article.append(head);
-  if (!hours.length) return article;
   const panel = document.createElement('div');
   panel.id = panelId;
   panel.className = 'mw-forecast__hours';
   panel.hidden = true;
-  panel.append(hourTable(hours, lang));
-  listen(head, 'click', () => {
-    const next = head.getAttribute('aria-expanded') !== 'true';
-    head.setAttribute('aria-expanded', next ? 'true' : 'false');
-    panel.hidden = !next;
-    if (next) paintIcons(panel);
-  }, signal);
-  article.append(panel);
+  panel.append(hours.length ? hourTable(hours, lang) : periodDetail(day));
+  article.append(head, panel);
   return article;
+}
+
+function periodDetail(day) {
+  const list = document.createElement('div');
+  list.className = 'mw-periods';
+  for (const id of PERIODS) {
+    const item = document.createElement('div');
+    item.className = 'mw-periods__item';
+    const symbol = day.periods?.[id]?.symbol;
+    if (symbol) item.append(icon(symbolIcon(symbol)));
+    const name = document.createElement('span');
+    name.textContent = tr(`page.${id}`);
+    item.append(name);
+    list.append(item);
+  }
+  return list;
 }
 
 function hourTable(hours, lang) {

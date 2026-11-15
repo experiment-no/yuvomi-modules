@@ -15,6 +15,7 @@ import {
   forecastFromHost,
   forecastFromMet,
   forecastFromOpenMeteo,
+  graphFromDays,
   graphHours,
   inNorway,
   layoutChart,
@@ -231,6 +232,11 @@ test('Open-Meteo hours become the same day rows', () => {
   assert.equal(daily.days[0].periods.night.symbol, 'cloudy');
   assert.equal(daily.days[0].periods.evening.symbol, 'cloudy');
   assert.equal(daily.days[0].hours.length, 0);
+  const line = graphFromDays(daily.days);
+  assert.equal(line.length, 2);
+  assert.equal(line[0].temp, 9);
+  assert.equal(line[1].temp, 7);
+  assert.equal(line[0].symbol, 'cloudy');
 });
 
 test('place search keeps Kartverket hits inside Norway and shortens the county', () => {
@@ -673,13 +679,13 @@ test('the sidecar answer is used when the service is there', async () => {
 test('the manifest and both languages describe the same weather module', () => {
   const manifest = JSON.parse(fs.readFileSync(new URL('../met-weather/module.json', import.meta.url), 'utf8'));
   assert.equal(manifest.id, 'met-weather');
-  assert.equal(manifest.version, '1.2.0');
+  assert.equal(manifest.version, '1.2.1');
   assert.equal(manifest.description, 'Værdata fra Norsk meteorologisk institutt');
   assert.equal(manifest.settings.labelKey, 'settings.title');
   assert.equal(manifest.capabilities.api.prefix, '/api/extensions/met-weather');
   assert.equal(manifest.capabilities.widgets[0].entry, 'widgets/forecast.js');
   assert.equal(manifest.capabilities.widgets[0].defaultVisible, true);
-  assert.equal(manifest.capabilities.widgets[0].defaultSize, '4x2');
+  assert.equal(manifest.capabilities.widgets[0].defaultSize, '4x1');
   const widget = fs.readFileSync(new URL('../met-weather/widgets/forecast.js', import.meta.url), 'utf8');
   assert.equal(widget.includes('yuvomi.navigate'), false);
   assert.equal(widget.includes('/m/met-weather'), false);

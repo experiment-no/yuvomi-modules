@@ -473,6 +473,25 @@ export function graphHours(hours, now = new Date(), span = 48) {
   });
 }
 
+/** One point per day, used when the hourly series is not available. */
+export function graphFromDays(days) {
+  return (Array.isArray(days) ? days : []).flatMap((day) => {
+    if (!day?.date || !Number.isFinite(day.high)) return [];
+    const time = osloLocalToIso(`${day.date}T12:00`);
+    if (!time) return [];
+    return [{
+      time,
+      temp: day.high,
+      precip: Number.isFinite(day.precip) ? day.precip : 0,
+      precipMax: null,
+      wind: Number.isFinite(day.wind) ? day.wind : null,
+      gust: Number.isFinite(day.gust) ? day.gust : null,
+      direction: Number.isFinite(day.direction) ? day.direction : null,
+      symbol: day.symbol || day.periods?.afternoon?.symbol || '',
+    }];
+  });
+}
+
 export function weekdayShort(date, lang = 'nb') {
   const when = new Date(`${date}T12:00:00Z`);
   if (!Number.isFinite(when.getTime())) return '';
