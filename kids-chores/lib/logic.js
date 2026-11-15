@@ -301,6 +301,17 @@ function shiftDate(iso, days) {
   return date.toISOString().slice(0, 10);
 }
 
+/** Use `?event=` from the saved address, so a Homey trigger name is the event we POST. */
+export function webhookEvent(url, fallback) {
+  try {
+    const value = new URL(url).searchParams.get('event');
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 120);
+  } catch {
+    // A stored address that does not parse keeps the built-in event name.
+  }
+  return fallback;
+}
+
 export function parseWebhookUrl(value) {
   if (value == null) return { url: null };
   if (typeof value !== 'string') return { error: 'webhook' };
@@ -553,7 +564,7 @@ async function complete(next, original, request, actor, now) {
     const reply = await callWebhook(request.postWebhook, chore.webhookUrl, {
       state: 'yes',
       done: true,
-      event: 'kids_chores.chore_completed',
+      event: webhookEvent(chore.webhookUrl, 'kids_chores.chore_completed'),
       module: 'kids-chores',
       date,
       choreId: chore.id,
