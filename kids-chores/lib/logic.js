@@ -187,6 +187,12 @@ export function publicSettings(settings, includeWebhook) {
   return out;
 }
 
+/** Wall stays hidden until an admin opts in and today has a scheduled chore. */
+export function shouldShowOnWall(data) {
+  if (!data || data.settings?.showOnWall !== true) return false;
+  return Array.isArray(data.items) && data.items.length > 0;
+}
+
 export function buildToday(state, now = new Date()) {
   const { date, weekday } = zonedCalendar(now, state.settings.timezone);
   const doneMap = state.completions[date] || {};

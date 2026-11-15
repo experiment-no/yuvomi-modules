@@ -5,12 +5,15 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { register } from 'node:module';
+
 import { createClient, KidsChoresError } from '../kids-chores/lib/client.js';
 import {
   PREFIX,
   buildToday,
   defaultState,
   handle,
+  shouldShowOnWall,
   zonedCalendar,
 } from '../kids-chores/lib/logic.js';
 import { createServer } from '../kids-chores/service/server.js';
@@ -533,4 +536,35 @@ test('the sidecar checks the session, csrf, origin, and file mode', async () => 
     hooks.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('overview choresApi returns today and completes a chore without the service', async () => {
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (key) => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => { store.set(key, String(value)); },
+    removeItem: (key) => { store.delete(key); },
+  };
+  register(new URL('./i18n-hook.mjs', import.meta.url));
+  const { choresApi, moduleDisplayTitle } = await import('../kids-chores/browser.js');
+  const created = await choresApi('/chores', {
+    method: 'POST',
+    body: { title: 'Seng', points: 3, days: [1, 2, 3, 4, 5, 6, 7] },
+  });
+  const today = await choresApi('/today');
+  assert.equal(today.items.some((item) => item.title === 'Seng'), true);
+  assert.equal(today.open.some((item) => item.title === 'Seng'), true);
+  assert.equal(today.settings.showOnWall, false);
+  assert.equal(Object.hasOwn(today.settings, 'webhookUrl'), false);
+  assert.equal(moduleDisplayTitle(today.settings), 'Today');
+  assert.equal(moduleDisplayTitle({ displayTitle: 'Morgenstell' }), 'Morgenstell');
+  assert.equal(shouldShowOnWall(today), false);
+  const done = await choresApi('/complete', { method: 'POST', body: { id: created.chore.id } });
+  assert.equal(done.earned, 3);
+  assert.equal(done.open.some((item) => item.title === 'Seng'), false);
+  assert.equal(shouldShowOnWall({ settings: { showOnWall: true }, items: done.items }), true);
+  await assert.rejects(
+    () => choresApi('/complete', { method: 'POST', body: { id: 'missing' } }),
+    (err) => err.reason === 'missing' && err.status === 404,
+  );
 });
