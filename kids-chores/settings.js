@@ -123,6 +123,12 @@ function settingsForm(data, signal, token, container) {
     button(tr('settings.testNo'), 'btn', signal, () => { void test('no'); }),
   );
   form.append(actions, status);
+  if (data.role === 'admin' && data.access === 'write') {
+    const resetRow = document.createElement('div');
+    resetRow.className = 'kc-actions';
+    resetRow.append(button(tr('settings.reset'), 'btn', signal, () => { void resetToday(); }));
+    form.append(hint(tr('settings.resetHint')), resetRow);
+  }
 
   listen(form, 'submit', (event) => {
     event.preventDefault();
@@ -152,6 +158,18 @@ function settingsForm(data, signal, token, container) {
       showToast(tr('settings.saved'));
       await paint(container, signal, token, null);
       if (saved?.local) status.hidden = true;
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+      showToast(errorBody(err), 'error');
+    }
+  }
+
+  async function resetToday() {
+    try {
+      await client.resetToday(signal);
+      if (stopped(container, signal, token)) return;
+      showToast(tr('settings.resetDone'));
+      await paint(container, signal, token, null);
     } catch (err) {
       if (err?.name === 'AbortError') return;
       showToast(errorBody(err), 'error');

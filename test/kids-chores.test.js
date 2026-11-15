@@ -277,6 +277,8 @@ test('chore rules: limit, reorder, day, lock, webhook, goal once, reset, prune',
   assert.equal(goal[0].url, 'https://hooks.example/reward');
   assert.equal(goal[0].payload.percent, 100);
   assert.equal(goal[0].payload.triggeredBy, 'Ada');
+  assert.equal(goal[0].payload.state, 'yes');
+  assert.equal(goal[0].payload.done, true);
   state = dishesDone.state;
 
   hooks.log.length = 0;
@@ -300,7 +302,12 @@ test('chore rules: limit, reorder, day, lock, webhook, goal once, reset, prune',
   assert.equal(reset.state.goals[old], undefined);
   const resetCalls = resetHooks.log.map((entry) => entry.payload);
   assert.ok(resetCalls.some((payload) => payload.state === 'no' && payload.done === false));
-  assert.ok(resetCalls.some((payload) => payload.event === 'kids_chores.points_reset' && payload.earned === 0));
+  assert.ok(resetCalls.some((payload) => (
+    payload.event === 'kids_chores.points_reset'
+    && payload.earned === 0
+    && payload.state === 'no'
+    && payload.done === false
+  )));
 
   const memberCreate = await ask(reset.state, 'POST', '/chores', { title: 'Nope', points: 1 }, member);
   assert.equal(memberCreate.status, 403);
@@ -315,6 +322,60 @@ test('chore rules: limit, reorder, day, lock, webhook, goal once, reset, prune',
   const missing = await ask(reset.state, 'POST', '/complete', { id: 'nope' });
   assert.equal(missing.status, 404);
   assert.equal(missing.body.reason, 'missing');
+});
+
+test('midnight resets every person and sets the reward webhook to no', async () => {
+  const saturday = new Date('2026-11-13T23:30:00Z');
+  let state = defaultState();
+  state.settings.pointGoal = 1;
+  state.settings.webhookUrl = 'https://webhooks.athom.com/webhook/abc?homey=HOMEYID&event=reward';
+  const created = await ask(state, 'POST', '/chores', {
+    title: 'Tømme sekken',
+    points: 1,
+    days: [1, 2, 3, 4, 5, 6, 7],
+    resetWebhookUrl: 'https://webhooks.athom.com/webhook/abc?homey=HOMEYID&event=ella_reset',
+  });
+  state = created.state;
+  const id = created.body.chore.id;
+  assert.equal(state.settings.rolledOn, '2026-11-13');
+  const hooks = calls();
+  const done = await ask(state, 'POST', '/complete', { id }, admin, hooks);
+  assert.equal(done.body.goalReached, true);
+  assert.deepEqual(hooks.log.at(-1).payload, {
+    event: 'reward',
+    state: 'yes',
+    done: true,
+    points: 1,
+  });
+  state = done.state;
+  const child = await ask(state, 'POST', '/complete', { id }, member, calls());
+  state = child.state;
+  assert.equal(child.body.items[0].done, true);
+
+  const quiet = calls();
+  const memberSat = await ask(state, 'GET', '/today', undefined, member, quiet, saturday);
+  assert.equal(memberSat.body.date, '2026-11-14');
+  assert.equal(memberSat.body.items[0].done, false);
+  assert.equal(quiet.log.length, 0);
+  assert.equal(memberSat.state.settings.rolledOn, '2026-11-13');
+
+  const rollHooks = calls();
+  const rolled = await ask(memberSat.state, 'GET', '/today', undefined, admin, rollHooks, saturday);
+  assert.equal(rolled.body.items[0].done, false);
+  assert.equal(rolled.state.completions['2026-11-14'], undefined);
+  assert.ok(rolled.state.completions['2026-11-13'][id][admin.id]);
+  assert.ok(rolled.state.completions['2026-11-13'][id][member.id]);
+  assert.equal(rolled.state.settings.rolledOn, '2026-11-14');
+  assert.deepEqual(rollHooks.log.map((entry) => entry.payload), [
+    { event: 'ella_reset', state: 'no', done: false },
+    { event: 'reward', state: 'no', done: false, points: 0 },
+  ]);
+  const again = calls();
+  const second = await ask(rolled.state, 'GET', '/today', undefined, admin, again, saturday);
+  assert.equal(second.body.items[0].done, false);
+  assert.equal(again.log.length, 0);
+  const childAgain = await ask(rolled.state, 'GET', '/today', undefined, member, calls(), saturday);
+  assert.equal(childAgain.body.items[0].done, false);
 });
 
 test('a negative webhook number blocks, and a later goal can fire again after reset', async () => {
