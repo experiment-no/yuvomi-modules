@@ -5,7 +5,7 @@
   "widgets.today": "Kids Chores",
   "page.score": "{{earned}} / {{goal}} poeng",
   "page.empty": "Ingen oppgaver i dag",
-  "page.congrats": "Alt ferdig i dag — digg jobba!",
+  "page.congrats": "Alt ferdig i dag — Bra jobba!",
   "page.reset": "Nullstill i dag",
   "page.markDone": "Merk {{title}} som ferdig",
   "goal.toast": "Dagens mål er nådd!",
