@@ -538,6 +538,22 @@ test('the sidecar checks the session, csrf, origin, and file mode', async () => 
   }
 });
 
+test('the overview catalog gets a Kids Chores widget', () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../kids-chores/module.json', import.meta.url), 'utf8'));
+  const widget = manifest.capabilities.widgets[0];
+  assert.equal(widget.id, 'today');
+  assert.equal(widget.entry, 'widgets/today.js');
+  assert.equal(widget.label, 'Kids Chores');
+  assert.equal(widget.labelKey, 'widgets.today');
+  assert.equal(widget.defaultVisible, true);
+  assert.equal(manifest.capabilities.permissions.widgets[0].id, 'today');
+  assert.equal(manifest.capabilities.permissions.widgets[0].label, 'Kids Chores');
+  for (const locale of ['en', 'nb']) {
+    const strings = JSON.parse(fs.readFileSync(new URL(`../kids-chores/locales/${locale}.json`, import.meta.url), 'utf8'));
+    assert.equal(strings['widgets.today'], 'Kids Chores');
+  }
+});
+
 test('overview choresApi returns today and completes a chore without the service', async () => {
   const store = new Map();
   globalThis.localStorage = {

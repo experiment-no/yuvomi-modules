@@ -2,7 +2,7 @@
   "menu": "Kids Chores",
   "module": "Kids Chores",
   "settings.title": "Oppsett for husstanden",
-  "widgets.today": "I dag",
+  "widgets.today": "Kids Chores",
   "page.score": "{{earned}} / {{goal}} poeng",
   "page.empty": "Ingen oppgaver i dag",
   "page.congrats": "Alt ferdig i dag — digg jobba!",
