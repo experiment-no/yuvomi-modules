@@ -675,35 +675,48 @@ test('overview choresApi returns today and completes a chore without the service
   );
 });
 
-test('a chore includes every member until one is cleared, and each member completes their own', async () => {
+test('a child only sees their own chores, and a parent follows the children they choose', async () => {
   let state = defaultState();
   const created = await ask(state, 'POST', '/chores', {
     title: 'Seng',
     points: 2,
     days: [5],
-    excludedMemberIds: ['b'],
+    assigneeIds: ['b'],
   });
   state = created.state;
-  assert.deepEqual(created.body.chore.excludedMemberIds, ['b']);
+  assert.deepEqual(created.body.chore.assigneeIds, ['b']);
   const ada = await ask(state, 'GET', '/today');
   const bea = await ask(state, 'GET', '/today', undefined, member);
-  assert.equal(ada.body.items.some((item) => item.title === 'Seng'), true);
-  assert.equal(bea.body.items.some((item) => item.title === 'Seng'), false);
-  const hidden = await ask(state, 'POST', '/complete', { id: created.body.chore.id }, member);
+  assert.equal(ada.body.items.some((item) => item.title === 'Seng'), false);
+  assert.equal(bea.body.items.some((item) => item.title === 'Seng'), true);
+  const hidden = await ask(state, 'POST', '/complete', { id: created.body.chore.id });
   assert.equal(hidden.status, 404);
+  const sibling = await ask(state, 'POST', '/complete', { id: created.body.chore.id, forUserId: 'b' }, {
+    id: 'c', name: 'Noa', access: 'write', role: 'member', csrfToken: 't',
+  });
+  assert.equal(sibling.status, 404);
 
-  const done = await ask(state, 'POST', '/complete', { id: created.body.chore.id });
-  assert.equal(done.body.earned, 2);
+  const followed = await ask(state, 'PUT', '/settings', { followingIds: ['b'] });
+  state = followed.state;
+  assert.deepEqual(followed.body.followingIds, ['b']);
+  const adaFollows = await ask(state, 'GET', '/today');
+  assert.equal(adaFollows.body.boards.some((board) => board.userId === 'b' && board.items[0].title === 'Seng'), true);
+  assert.equal(adaFollows.body.viewerId, 'a');
+  const done = await ask(state, 'POST', '/complete', { id: created.body.chore.id, forUserId: 'b' });
+  assert.equal(done.status, 200);
+  assert.equal(done.body.boards.find((board) => board.userId === 'b').earned, 2);
   const beaAfter = await ask(done.state, 'GET', '/today', undefined, member);
-  assert.equal(beaAfter.body.earned, 0);
-  const adaAgain = await ask(done.state, 'GET', '/today');
-  assert.equal(adaAgain.body.items[0].done, true);
+  assert.equal(beaAfter.body.items[0].done, true);
+  assert.equal(beaAfter.body.earned, 2);
 
   const legacy = defaultState();
-  legacy.chores = created.state.chores;
+  legacy.chores = [{ ...created.state.chores[0], assigneeIds: null, excludedMemberIds: ['b'] }];
+  assert.equal(buildToday(legacy, FRIDAY, member).items.length, 0);
   legacy.completions[done.body.date] = { [created.body.chore.id]: { at: FRIDAY.toISOString(), by: 'Ada' } };
-  assert.equal(buildToday(legacy, FRIDAY, member).items[0], undefined);
-  const adaLegacy = buildToday({ ...legacy, chores: [{ ...created.state.chores[0], excludedMemberIds: [] }] }, FRIDAY, member);
+  const adaLegacy = buildToday({
+    ...legacy,
+    chores: [{ ...legacy.chores[0], excludedMemberIds: [] }],
+  }, FRIDAY, admin);
   assert.equal(adaLegacy.items[0].done, true);
 });
 
@@ -730,4 +743,10 @@ test('sharing off keeps one list per account, and the same account is one list',
   assert.equal(project(shared, admin).chores[0].title, 'Felles');
   assert.equal(project(shared, member).chores.length, 0);
   assert.equal(shared.shared.chores.length, 0);
+
+  const again = openDocument(JSON.parse(JSON.stringify(shared)));
+  const follow = await ask(project(again, admin), 'PUT', '/settings', { followingIds: ['b'] });
+  commit(again, admin, follow.state);
+  assert.deepEqual(project(again, admin).followingIds, ['b']);
+  assert.deepEqual(project(again, member).followingIds, []);
 });

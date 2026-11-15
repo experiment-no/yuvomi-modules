@@ -10,7 +10,7 @@ cd kids-chores && zip -r ../kids-chores.zip .
 
 Settings → Modules → Add custom module, then enable Kids Chores. With no reverse proxy the page stores chores in this browser under `kids-chores.state.v1`. Reloading keeps them. Another browser does not see them. The service below is what makes a PC and an iPad signed in as the same account share the list. The first device that opens Kids Chores copies a browser-only list onto the service when the service list is still empty.
 
-Sharing across members is on by default. A chore includes every household member until someone clears that member on the chore. Turning sharing off keeps a separate list per account. The same account still shares that list across its devices.
+Sync across users is on by default. Each child sees only the chores checked for them. A new chore starts with nobody checked, and Everyone checks them all so you can clear the ones who should not have it. I follow is how a parent chooses which children's chores to see. Turning sync off keeps a separate list per account. The same account still shares that list across its devices. Chores saved before this version still show for everyone until you edit them and check the right child.
 
 Updating from GitHub asks to replace the installed version with the version in this file. Confirming that replace turns the module off. Turn Kids Chores on again under Active modules, then reload the overview. The overview tile stays hidden while the module is off.
 

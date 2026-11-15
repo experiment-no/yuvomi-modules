@@ -1,4 +1,5 @@
 import { createClient } from './lib/client.js';
+import { loadMembers, memberName } from './lib/members.js';
 import { msUntilNextDate } from './lib/logic.js';
 import { STYLE_HREF, button, ensureStyle, errorBody, listen, progressMark, showEmpty, showToast, tr } from './lib/ui.js';
 
@@ -18,7 +19,10 @@ async function paint(container, signal, token) {
   if (stopped(container, signal, token)) return;
   let data;
   try {
-    data = await client.today(signal);
+    const [today, members] = await Promise.all([client.today(signal), loadMembers(signal)]);
+    data = today;
+    data.members = members;
+    container._kcMembers = members;
   } catch (err) {
     if (stopped(container, signal, token) || err?.name === 'AbortError') return;
     await showEmpty(container, {
@@ -55,43 +59,69 @@ function draw(container, data, signal, token) {
 
   const body = document.createElement('div');
   body.className = 'app-page__body';
-  const hero = document.createElement('div');
-  hero.className = 'kc-hero';
-  hero.append(progressMark(data.percent, data.progressIcon, 96));
-  const score = document.createElement('p');
-  score.className = 'kc-score';
-  score.textContent = tr('page.score', { earned: data.earned, goal: data.goal });
-  hero.append(score);
-
-  const section = document.createElement('section');
-  section.className = 'page-section kc-list';
-  if (!data.items.length) {
-    const empty = document.createElement('div');
-    section.append(empty);
-    void showEmpty(empty, {
-      variant: 'empty',
-      compact: true,
-      title: tr('page.empty'),
-    });
-  } else if (data.allDone) {
-    const message = document.createElement('p');
-    message.className = 'kc-congrats';
-    message.textContent = data.congratsMessage || tr('page.congrats');
-    section.append(message);
-  } else {
-    const canWrite = data.access === 'write';
-    for (const item of data.open) section.append(choreRow(item, canWrite, signal, () => {
-      void run(container, signal, token, () => client.complete(item.id, signal), true);
-    }));
-  }
-
-  body.append(hero, section);
+  for (const board of boardsOf(data)) body.append(boardBlock(board, data, signal, token, container));
   root.append(toolbar, body);
   container.replaceChildren(root);
   armMidnight(container, signal, token, data.settings.timezone);
 }
 
-function choreRow(item, canWrite, signal, onClick) {
+function boardsOf(data) {
+  if (Array.isArray(data.boards) && data.boards.length) return data.boards;
+  return [{
+    userId: data.viewerId,
+    items: Array.isArray(data.items) ? data.items : [],
+    open: Array.isArray(data.open) ? data.open : [],
+    earned: data.earned,
+    goal: data.goal,
+    percent: data.percent,
+    allDone: data.allDone,
+  }];
+}
+
+function boardBlock(board, data, signal, token, container) {
+  const block = document.createElement('section');
+  block.className = 'kc-board page-section';
+  const showName = board.userId && data.viewerId && board.userId !== data.viewerId;
+  if (showName) {
+    const name = document.createElement('h2');
+    name.className = 'kc-board__name';
+    name.textContent = memberName(data.members, board.userId) || tr('page.board', { name: board.userId });
+    block.append(name);
+  }
+  const hero = document.createElement('div');
+  hero.className = 'kc-hero';
+  hero.append(progressMark(board.percent, data.progressIcon, 96));
+  const score = document.createElement('p');
+  score.className = 'kc-score';
+  score.textContent = tr('page.score', { earned: board.earned ?? 0, goal: board.goal ?? data.goal ?? 0 });
+  hero.append(score);
+  const list = document.createElement('div');
+  list.className = 'kc-list';
+  const items = Array.isArray(board.items) ? board.items : [];
+  const open = Array.isArray(board.open) ? board.open : items.filter((item) => item && !item.done && !item.locked);
+  if (!items.length) {
+    const empty = document.createElement('div');
+    list.append(empty);
+    void showEmpty(empty, { variant: 'empty', compact: true, title: tr('page.empty') });
+  } else if (board.allDone) {
+    const message = document.createElement('p');
+    message.className = 'kc-congrats';
+    message.textContent = data.congratsMessage || tr('page.congrats');
+    list.append(message);
+  } else {
+    const canWrite = data.access === 'write';
+    const person = showName ? (memberName(data.members, board.userId) || board.userId) : '';
+    for (const item of open) {
+      list.append(choreRow(item, canWrite, person, signal, () => {
+        void run(container, signal, token, () => client.complete(item.id, signal, item.forUserId), true);
+      }));
+    }
+  }
+  block.append(hero, list);
+  return block;
+}
+
+function choreRow(item, canWrite, person, signal, onClick) {
   const row = document.createElement(canWrite ? 'button' : 'div');
   row.className = 'kc-chore';
   if (canWrite) {
@@ -105,7 +135,11 @@ function choreRow(item, canWrite, signal, onClick) {
   points.className = 'kc-chore__points';
   points.textContent = String(item.points);
   row.append(name, points);
-  if (canWrite) row.setAttribute('aria-label', tr('page.markDone', { title: item.title }));
+  if (canWrite) {
+    row.setAttribute('aria-label', person
+      ? tr('page.markDoneFor', { title: item.title, name: person })
+      : tr('page.markDone', { title: item.title }));
+  }
   return row;
 }
 
@@ -113,6 +147,7 @@ async function run(container, signal, token, action, toastGoal) {
   try {
     const next = await action();
     if (stopped(container, signal, token)) return;
+    if (next) next.members = container._kcMembers;
     if (toastGoal && next.goalReached) showToast(tr('goal.toast'));
     draw(container, next, signal, token);
   } catch (err) {
