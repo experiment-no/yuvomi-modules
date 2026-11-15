@@ -17,7 +17,7 @@ Features:
 
 ### Weather
 
-A Norway-only forecast from MET Locationforecast. The overview tile opens a graph with a one-day view and a two-day view. Place search uses Kartverket, and the hours are fetched by a small service that runs beside Yuvomi. The page is available in Norwegian and English.
+Weather data from the Norwegian Meteorological Institute. The overview tile opens a one-day view and a two-day view. With no extra service, the page uses the weather Yuvomi already fetches. A small service beside Yuvomi can still supply MET Locationforecast hours. Place search stays inside Norway. The page is available in Norwegian and English.
 
 ### External Integrations such as Homey and Home Assistant
 

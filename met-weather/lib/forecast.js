@@ -64,6 +64,101 @@ export function symbolIcon(code) {
   return ICONS[key] || 'cloud';
 }
 
+/** WMO codes from Yuvomi's weather proxy, spoken with the same symbol names as MET. */
+const WMO_SYMBOL = {
+  0: 'clearsky',
+  1: 'fair',
+  2: 'partlycloudy',
+  3: 'cloudy',
+  45: 'fog',
+  48: 'fog',
+  51: 'lightrain',
+  53: 'rain',
+  55: 'heavyrain',
+  56: 'lightrain',
+  57: 'heavyrain',
+  61: 'lightrain',
+  63: 'rain',
+  65: 'heavyrain',
+  66: 'lightrain',
+  67: 'heavyrain',
+  71: 'lightsnow',
+  73: 'snow',
+  75: 'heavysnow',
+  77: 'snow',
+  80: 'lightrainshowers',
+  81: 'rainshowers',
+  82: 'heavyrainshowers',
+  85: 'lightsnowshowers',
+  86: 'heavysnowshowers',
+  95: 'rainandthunder',
+  96: 'heavyrainandthunder',
+  99: 'heavyrainandthunder',
+};
+
+export function symbolFromWmo(desc, icon) {
+  const code = Number(String(desc || '').replace(/^wmo\./, ''));
+  const base = WMO_SYMBOL[code] || 'unknown';
+  const night = icon === 'moon' || icon === 'cloud-moon';
+  return night ? `${base}_night` : base;
+}
+
+function windMs(speed, units) {
+  const value = Number(speed);
+  if (!Number.isFinite(value)) return null;
+  if (units === 'imperial') return value / 2.236936;
+  return value / 3.6;
+}
+
+function hostDay(day) {
+  if (!day || typeof day.date !== 'string') return null;
+  const low = Number(day.temp_min);
+  const high = Number(day.temp_max);
+  return {
+    date: day.date,
+    low: Number.isFinite(low) ? low : null,
+    high: Number.isFinite(high) ? high : null,
+    symbol: symbolFromWmo(day.desc, day.icon),
+  };
+}
+
+/**
+ * Yuvomi's /api/v1/weather document. Hours are not in that response, so the
+ * page draws the days instead. Wind arrives as km/h (or mph) and is stored as m/s.
+ */
+export function forecastFromHost(payload) {
+  const empty = { configured: false, place: null, current: null, hours: [], days: [] };
+  if (!payload) return empty;
+  if (payload.reason === 'upstream_error') return { error: 'upstream' };
+  if (payload.reason === 'not_configured' || payload.data == null) return empty;
+  const data = payload.data;
+  const temp = Number(data.current?.temp);
+  if (!Number.isFinite(temp)) return empty;
+  const days = [hostDay(data.today), ...(Array.isArray(data.forecast) ? data.forecast.map(hostDay) : [])].filter(Boolean);
+  return {
+    configured: true,
+    source: 'host',
+    place: {
+      name: typeof data.city === 'string' ? data.city : '',
+      municipality: '',
+      county: '',
+    },
+    current: {
+      temp,
+      symbol: symbolFromWmo(data.current.desc, data.current.icon),
+      wind: windMs(data.current.wind_speed, data.units),
+      direction: null,
+      precip: null,
+    },
+    hours: [],
+    days,
+    attribution: {
+      met: 'https://www.met.no/',
+      openMeteo: 'https://open-meteo.com/',
+    },
+  };
+}
+
 export function compass(degrees, locale) {
   if (!Number.isFinite(degrees)) return '';
   const dirs = locale === 'nb' ? COMPASS_NB : COMPASS_EN;

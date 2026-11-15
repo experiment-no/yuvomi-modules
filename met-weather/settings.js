@@ -108,7 +108,7 @@ async function search(query, results, status, signal, token, container) {
       where.textContent = [place.municipality, place.county].filter(Boolean).join(' · ');
       button.append(name, where);
       listen(button, 'click', () => {
-        void choose(place.id, status, signal, token, container);
+        void choose(place, status, signal, token, container);
       }, signal);
       results.append(button);
     }
@@ -118,10 +118,10 @@ async function search(query, results, status, signal, token, container) {
   }
 }
 
-async function choose(id, status, signal, token, container) {
+async function choose(place, status, signal, token, container) {
   status.textContent = tr('settings.saving');
   try {
-    await weatherApi('place', { id, signal });
+    await weatherApi('place', { place, signal });
     if (stopped(container, signal, token)) return;
     status.textContent = tr('settings.saved');
     await paint(container, signal, token);

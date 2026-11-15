@@ -1,5 +1,6 @@
 import { sliceHours, symbolIcon, symbolKey, compass, extent, formatNumber } from './lib/forecast.js';
 import {
+  dayLabel,
   drawChart,
   ensureStyle,
   errorBody,
@@ -72,19 +73,37 @@ function draw(container, data, signal, token, days) {
 
   const hours = sliceHours(data.hours, days);
   const current = data.current || hours[0];
-  body.append(hero(data.place, current, hours, lang));
-  body.append(tabs(days, signal, (next) => {
-    draw(container, data, signal, token, next);
-  }));
-  body.append(chartBlock(hours, lang));
-  body.append(credit());
-  body.append(table(hours, lang));
+  if (hours.length) {
+    body.append(hero(data.place, current, extent(hours), lang));
+    body.append(tabs(days, signal, (next) => {
+      draw(container, data, signal, token, next);
+    }));
+    body.append(chartBlock(hours, lang));
+    body.append(credit(data));
+    body.append(table(hours, lang));
+  } else {
+    const shown = (Array.isArray(data.days) ? data.days : []).slice(0, days === 1 ? 1 : 2);
+    body.append(hero(data.place, current, dayExtent(shown), lang));
+    if (data.days?.length > 1) {
+      body.append(tabs(days, signal, (next) => {
+        draw(container, data, signal, token, next);
+      }));
+    }
+    if (shown.length) body.append(dayTable(shown, lang));
+    body.append(credit(data));
+  }
   root.append(body);
   container.replaceChildren(root);
   paintIcons(container);
 }
 
-function hero(place, current, hours, lang) {
+function dayExtent(days) {
+  const temps = days.flatMap((day) => [day.low, day.high]).filter(Number.isFinite);
+  if (!temps.length) return { low: null, high: null };
+  return { low: Math.min(...temps), high: Math.max(...temps) };
+}
+
+function hero(place, current, span, lang) {
   const wrap = document.createElement('div');
   wrap.className = 'mw-hero';
   const badge = document.createElement('div');
@@ -99,12 +118,14 @@ function hero(place, current, hours, lang) {
   where.textContent = placeLine(place);
   const summary = document.createElement('p');
   summary.className = 'mw-summary';
-  const span = extent(hours);
   const condition = tr(`symbol.${symbolKey(current?.symbol)}`);
   const wind = [formatNumber(current?.wind, 1), compass(current?.direction, lang)].filter(Boolean).join(' ');
+  const highLow = Number.isFinite(span?.low) && Number.isFinite(span?.high)
+    ? tr('page.highLow', { low: formatNumber(span.low, 1), high: formatNumber(span.high, 1) })
+    : '';
   summary.textContent = [
     condition.startsWith('extensions.') ? symbolKey(current?.symbol) : condition,
-    tr('page.highLow', { low: formatNumber(span.low, 1), high: formatNumber(span.high, 1) }),
+    highLow,
     wind ? `${tr('page.wind')} ${wind} m/s` : '',
   ].filter(Boolean).join(' · ');
   text.append(temp, where, summary);
@@ -192,12 +213,57 @@ function table(hours, lang) {
   return wrap;
 }
 
-function credit() {
+function dayTable(days, lang) {
+  const wrap = document.createElement('div');
+  wrap.className = 'mw-table-wrap';
+  const tableEl = document.createElement('table');
+  tableEl.className = 'mw-table';
+  const head = document.createElement('thead');
+  const row = document.createElement('tr');
+  for (const name of ['page.time', 'page.temp', 'page.weather']) {
+    const cell = document.createElement('th');
+    cell.scope = 'col';
+    cell.textContent = tr(name);
+    row.append(cell);
+  }
+  head.append(row);
+  const body = document.createElement('tbody');
+  for (const day of days) {
+    const line = document.createElement('tr');
+    const condition = tr(`symbol.${symbolKey(day.symbol)}`);
+    const range = Number.isFinite(day.low) && Number.isFinite(day.high)
+      ? tr('page.highLow', { low: formatNumber(day.low, 1), high: formatNumber(day.high, 1) })
+      : '';
+    const values = [
+      dayLabel(day.date, lang),
+      range,
+      condition.startsWith('extensions.') ? symbolKey(day.symbol) : condition,
+    ];
+    for (const value of values) {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      line.append(cell);
+    }
+    body.append(line);
+  }
+  tableEl.append(head, body);
+  wrap.append(tableEl);
+  return wrap;
+}
+
+function credit(data) {
   const note = document.createElement('p');
   note.className = 'mw-credit';
   const met = document.createElement('a');
-  met.href = 'https://www.met.no/';
+  met.href = data?.attribution?.met || 'https://www.met.no/';
   met.textContent = 'Meteorologisk institutt';
+  if (data?.source === 'host') {
+    const openMeteo = document.createElement('a');
+    openMeteo.href = data.attribution?.openMeteo || 'https://open-meteo.com/';
+    openMeteo.textContent = 'Open-Meteo';
+    note.append(tr('page.creditHostBefore'), met, tr('page.creditHostMid'), openMeteo, tr('page.creditHostAfter'));
+    return note;
+  }
   const kartverket = document.createElement('a');
   kartverket.href = 'https://www.kartverket.no/';
   kartverket.textContent = 'Kartverket';
