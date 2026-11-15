@@ -2,7 +2,7 @@
   "menu": "Kids Chores",
   "module": "Kids Chores",
   "settings.title": "Household setup",
-  "widgets.today": "Today",
+  "widgets.today": "Kids Chores",
   "page.score": "{{earned}} / {{goal}} points",
   "page.empty": "No chores today",
   "page.congrats": "All done today — nice work!",
