@@ -8,7 +8,11 @@ Zip it so `module.json` is at the archive root:
 cd kids-chores && zip -r ../kids-chores.zip .
 ```
 
-Settings → Modules → Add custom module, then enable Kids Chores. With no reverse proxy the page stores chores in this browser under `kids-chores.state.v1`. Reloading keeps them. Another browser does not see them. The service below is what makes a PC and an iPad signed in as the same account share the list. The first device that opens Kids Chores copies a browser-only list onto the service when the service list is still empty.
+Settings → Modules → Add custom module, then enable Kids Chores. With no sidecar, the page stores the household list in a Yuvomi note titled Kids Chores. Every signed-in member can read that note, so a generic chore created by an administrator shows up for the rest of the household, and a chore linked to one person shows only for them. Each person's check-offs are kept in a note they can update themselves, titled Kids Chores log. Leave both notes alone. The first time Kids Chores opens in a browser that already has chores, and the Kids Chores note does not exist yet, that list is copied into the note. Open Kids Chores once on the computer where the chores were created after installing this version.
+
+If the notes cannot be read, the page keeps the old browser-only copy under `kids-chores.state.v1`. Another browser does not see that copy.
+
+The optional service below is another way to share the list. When `/api/extensions/kids-chores` answers, the page uses it instead of the note. The first device that opens Kids Chores copies a browser-only list onto the service when the service list is still empty.
 
 Sync across users is on by default. A chore with nobody checked is generic and shows for every member. Check a child to link it only to that child. Everyone links it to each child, and you can clear the ones who should not have it. I follow is how a parent chooses which children's chores to see, in addition to the generic ones. Turning sync off keeps a separate list per account. The same account still shares that list across its devices. Chores saved before this version still show for everyone until you edit them and check the right child.
 

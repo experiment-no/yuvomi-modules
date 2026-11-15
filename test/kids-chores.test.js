@@ -8,6 +8,7 @@ import test from 'node:test';
 import { register } from 'node:module';
 
 import { createClient, KidsChoresError } from '../kids-chores/lib/client.js';
+import { STATE_MARK } from '../kids-chores/lib/household.js';
 import { postWebhook } from '../kids-chores/lib/webhook.js';
 import {
   PREFIX,
@@ -774,3 +775,204 @@ test('sharing off keeps one list per account, and the same account is one list',
   assert.deepEqual(project(again, admin).followingIds, ['b']);
   assert.deepEqual(project(again, member).followingIds, []);
 });
+
+const HOMEY = 'https://webhooks.athom.com/webhook/648d9cdc3e7ea90bb080ab45?homey=HOMEYID&event=ella_checkin';
+
+test('a generic chore saved by an administrator is visible to other members through household notes', async () => {
+  const notes = [];
+  const writes = [];
+  const webhooks = [];
+  let who = { id: 1, role: 'admin', name: 'Ada' };
+  const api = fakeNotes(notes, writes, () => who);
+  const storage = memoryStorage();
+  const previousStorage = globalThis.localStorage;
+  const previousFetch = globalThis.fetch;
+  globalThis.localStorage = storage;
+  globalThis.fetch = async (url, init) => {
+    const href = String(url);
+    if (href.startsWith('https://webhooks.athom.com/')) {
+      webhooks.push({ url: href, body: JSON.parse(init.body) });
+      return { ok: true, status: 204, text: async () => '' };
+    }
+    throw new TypeError('network');
+  };
+  const clientFor = () => createClient({
+    loadApi: async () => ({ api }),
+    now: () => FRIDAY,
+  });
+  try {
+    who = { id: 2, role: 'member', name: 'Bea' };
+    const before = await clientFor().today();
+    assert.equal(before.items.length, 0);
+    assert.equal(before.local, undefined);
+    assert.equal(notes.length, 0);
+
+    who = { id: 1, role: 'admin', name: 'Ada' };
+    const admin = clientFor();
+    const generic = await admin.createChore({
+      title: 'Tømme sekken',
+      points: 5,
+      days: [5],
+      assigneeIds: [],
+      webhookUrl: HOMEY,
+    });
+    assert.equal(generic.local, undefined);
+    assert.equal(generic.role, 'admin');
+    const linked = await admin.createChore({
+      title: 'Ryggsekk',
+      points: 1,
+      days: [5],
+      assigneeIds: ['2'],
+    });
+    const again = await admin.today();
+    assert.equal(again.items.some((item) => item.title === 'Tømme sekken'), true);
+    assert.equal(writes.filter((write) => write.userId === 1 && write.content.includes(STATE_MARK)).length, 2);
+
+    who = { id: 3, role: 'member', name: 'Cy' };
+    const sibling = await clientFor().today();
+    assert.equal(sibling.role, 'member');
+    assert.deepEqual(sibling.items.map((item) => item.title), ['Tømme sekken']);
+
+    who = { id: 2, role: 'member', name: 'Bea' };
+    const child = clientFor();
+    const seen = await child.today();
+    assert.deepEqual(seen.items.map((item) => item.title).sort(), ['Ryggsekk', 'Tømme sekken']);
+    const done = await child.complete(generic.chore.id);
+    assert.equal(done.items.find((item) => item.title === 'Tømme sekken').done, true);
+    assert.equal(done.items.find((item) => item.title === 'Ryggsekk').done, false);
+    await child.complete(linked.chore.id);
+    assert.deepEqual(webhooks, [{
+      url: HOMEY,
+      body: { event: 'ella_checkin', state: 'yes', done: true, points: 5 },
+    }]);
+    assert.equal(writes.some((write) => write.userId === 2 && write.content.includes(STATE_MARK)), false);
+
+    who = { id: 1, role: 'admin', name: 'Ada' };
+    const stillOpen = await admin.today();
+    assert.equal(stillOpen.items.find((item) => item.title === 'Tømme sekken').done, false);
+    await admin.saveSettings({ followingIds: ['2'] });
+    const followed = await admin.today();
+    const board = followed.boards.find((item) => item.userId === '2');
+    assert.equal(board.items.find((item) => item.title === 'Ryggsekk').done, true);
+    assert.equal(board.items.some((item) => item.title === 'Tømme sekken'), false);
+    const state = notes.find((note) => note.content.includes(STATE_MARK));
+    assert.equal(state.visibility, 'all');
+    assert.equal(state.content.includes(HOMEY), true);
+    assert.equal(state.content.includes('"assigneeIds":[]'), true);
+  } finally {
+    globalThis.localStorage = previousStorage;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('chores already stored in this browser are copied into the household note', async () => {
+  const notes = [];
+  const writes = [];
+  let who = { id: 1, role: 'admin', name: 'Ada' };
+  const api = fakeNotes(notes, writes, () => who);
+  const storage = memoryStorage();
+  const previousStorage = globalThis.localStorage;
+  const previousFetch = globalThis.fetch;
+  globalThis.localStorage = storage;
+  globalThis.fetch = async () => { throw new TypeError('network'); };
+  const doc = openDocument(null);
+  const local = { id: 'local', name: 'local', access: 'write', role: 'admin', csrfToken: 'local', local: true };
+  const created = await handle(project(doc, local), {
+    method: 'POST',
+    path: '/chores',
+    body: { title: 'Tømme sekken', points: 5, days: [5], assigneeIds: [] },
+    actor: local,
+    now: FRIDAY,
+    postWebhook: async () => ({ status: 204, body: '' }),
+  });
+  commit(doc, local, created.state);
+  const finished = await handle(project(doc, local), {
+    method: 'POST',
+    path: '/complete',
+    body: { id: created.body.chore.id },
+    actor: local,
+    now: FRIDAY,
+    postWebhook: async () => ({ status: 204, body: '' }),
+  });
+  commit(doc, local, finished.state);
+  storage.setItem('kids-chores.state.v1', JSON.stringify(doc));
+  const clientFor = () => createClient({
+    loadApi: async () => ({ api }),
+    now: () => FRIDAY,
+  });
+  try {
+    const admin = await clientFor().today();
+    assert.equal(admin.local, undefined);
+    assert.equal(admin.items[0].title, 'Tømme sekken');
+    assert.equal(admin.items[0].done, true);
+    who = { id: 2, role: 'member', name: 'Bea' };
+    const member = await clientFor().today();
+    assert.equal(member.items[0].title, 'Tømme sekken');
+    assert.equal(member.items[0].done, false);
+    assert.equal(notes.some((note) => note.content.includes(STATE_MARK)), true);
+  } finally {
+    globalThis.localStorage = previousStorage;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+function fakeNotes(notes, writes, session) {
+  let nextId = 1;
+  const me = () => session();
+  const canEdit = (note) => {
+    const person = me();
+    if (String(note.created_by) === String(person.id)) return true;
+    if (person.role === 'admin') return true;
+    return false;
+  };
+  const visible = (note) => {
+    const person = me();
+    if (note.visibility !== 'private') return true;
+    return String(note.created_by) === String(person.id);
+  };
+  return {
+    async get(path) {
+      const person = me();
+      if (path === '/auth/me') {
+        return {
+          user: { id: person.id, role: person.role, display_name: person.name },
+          permissions: person.role === 'admin'
+            ? { admin: true }
+            : { capabilities: { notes_edit_others: 'none' } },
+        };
+      }
+      if (path === '/notes') return { data: notes.filter(visible).map((note) => ({ ...note })) };
+      throw Object.assign(new Error('missing'), { status: 404 });
+    },
+    async post(path, body) {
+      if (path !== '/notes') throw Object.assign(new Error('missing'), { status: 404 });
+      const person = me();
+      const note = {
+        id: nextId,
+        content: body.content,
+        title: body.title,
+        color: body.color,
+        visibility: body.visibility || 'all',
+        created_by: person.id,
+      };
+      nextId += 1;
+      notes.push(note);
+      writes.push({ userId: person.id, method: 'POST', content: body.content });
+      return { data: { ...note } };
+    },
+    async put(path, body) {
+      const id = Number(String(path).split('/')[2]);
+      const note = notes.find((item) => item.id === id);
+      if (!note) throw Object.assign(new Error('missing'), { status: 404 });
+      if (!canEdit(note)) throw Object.assign(new Error('not owner'), { status: 403 });
+      if (body.visibility && body.visibility !== note.visibility && String(note.created_by) !== String(me().id)) {
+        throw Object.assign(new Error('not owner'), { status: 403 });
+      }
+      if (body.content != null) note.content = body.content;
+      if (body.title !== undefined) note.title = body.title;
+      if (body.visibility) note.visibility = body.visibility;
+      writes.push({ userId: me().id, method: 'PUT', content: body.content });
+      return { data: { ...note } };
+    },
+  };
+}
