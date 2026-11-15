@@ -1,0 +1,245 @@
+.mw-page,
+.mw-settings,
+.mw-widget {
+  color: var(--color-text, inherit);
+  min-width: 0;
+}
+
+.mw-hero {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.25rem 0 1rem;
+}
+
+.mw-hero__icon {
+  display: grid;
+  place-items: center;
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: 1.2rem;
+  background: color-mix(in srgb, var(--widget-accent, #0369A1) 16%, transparent);
+}
+
+.mw-hero__icon i {
+  width: 2.4rem;
+  height: 2.4rem;
+}
+
+.mw-temp {
+  margin: 0;
+  font-size: 2.4rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.mw-place,
+.mw-summary,
+.mw-credit {
+  margin: 0.7rem 0 0;
+  color: var(--color-text-secondary, inherit);
+}
+
+.mw-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0 0 0.8rem;
+}
+
+.mw-tab {
+  border: 1px solid var(--color-border, rgba(127, 127, 127, 0.35));
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+}
+
+.mw-tab[aria-selected="true"] {
+  border-color: var(--widget-accent, #0369A1);
+  background: color-mix(in srgb, var(--widget-accent, #0369A1) 16%, transparent);
+}
+
+.mw-chart {
+  overflow: hidden;
+  border: 1px solid var(--color-border, rgba(127, 127, 127, 0.35));
+  border-radius: 1rem;
+  padding: 0.4rem 0.2rem 0.2rem;
+}
+
+.mw-chart__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.mw-chart__axis {
+  stroke: var(--color-border, rgba(127, 127, 127, 0.55));
+  stroke-width: 1;
+}
+
+.mw-chart__precip {
+  fill: #38bdf8;
+  opacity: 0.8;
+}
+
+.mw-chart__temp {
+  fill: none;
+  stroke: var(--widget-accent, #0369A1);
+  stroke-width: 2.4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.mw-chart__dot {
+  fill: var(--widget-accent, #0369A1);
+}
+
+.mw-chart__label {
+  fill: currentColor;
+  font-size: 11px;
+}
+
+.mw-legend {
+  display: flex;
+  gap: 1rem;
+  margin: 0.6rem 0 0;
+  font-size: 0.9rem;
+}
+
+.mw-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.mw-swatch {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 0.2rem;
+  background: #38bdf8;
+}
+
+.mw-swatch--temp {
+  height: 0.2rem;
+  background: var(--widget-accent, #0369A1);
+}
+
+.mw-table-wrap {
+  max-height: 22rem;
+  overflow: auto;
+  margin-top: 1rem;
+  border: 1px solid var(--color-border, rgba(127, 127, 127, 0.35));
+  border-radius: 1rem;
+}
+
+.mw-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.mw-table th,
+.mw-table td {
+  padding: 0.45rem 0.7rem;
+  text-align: start;
+  border-bottom: 1px solid var(--color-border, rgba(127, 127, 127, 0.25));
+}
+
+.mw-table th {
+  position: sticky;
+  top: 0;
+  background: var(--color-surface, Canvas);
+}
+
+.mw-widget {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  height: 100%;
+  min-height: 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.mw-widget:hover .mw-temp,
+.mw-widget:focus-visible .mw-temp {
+  color: var(--widget-accent, #0369A1);
+}
+
+.mw-widget__row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.mw-widget__symbol {
+  display: grid;
+  place-items: center;
+  width: 2.4rem;
+  height: 2.4rem;
+}
+
+.mw-widget__symbol i,
+.mw-widget__symbol svg {
+  width: 2rem;
+  height: 2rem;
+}
+
+.mw-widget__temp {
+  margin: 0;
+  font-size: 1.7rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.mw-widget__meta {
+  margin: 0;
+  color: var(--color-text-secondary, inherit);
+}
+
+.mw-spark {
+  display: block;
+  width: 100%;
+  height: 3rem;
+}
+
+.mw-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.6rem 0 0;
+}
+
+.mw-result {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--color-border, rgba(127, 127, 127, 0.35));
+  border-radius: 0.8rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.mw-result:hover,
+.mw-result:focus-visible {
+  border-color: var(--widget-accent, #0369A1);
+}
+
+.mw-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-width: 32rem;
+}
+
+.mw-status {
+  min-height: 1.2rem;
+}
