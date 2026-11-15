@@ -1,7 +1,7 @@
 import { createClient } from './lib/client.js';
 import { loadMembers, memberName } from './lib/members.js';
 import { msUntilNextDate } from './lib/logic.js';
-import { STYLE_HREF, boardSignature, button, ensureStyle, errorBody, listen, progressMark, showEmpty, showToast, tr, watchAdmin } from './lib/ui.js';
+import { STYLE_HREF, boardSignature, ensureStyle, errorBody, listen, progressMark, showEmpty, showToast, tr, watchAdmin } from './lib/ui.js';
 
 const client = createClient();
 
@@ -63,11 +63,6 @@ function draw(container, data, signal, token) {
   title.className = 'page-toolbar__title';
   title.textContent = data.settings.displayTitle || tr('module');
   toolbar.append(title);
-  if (data.role === 'admin' && data.access === 'write') {
-    toolbar.append(button(tr('page.reset'), 'btn', signal, () => {
-      void run(container, signal, token, () => client.resetToday(signal), false);
-    }));
-  }
 
   const body = document.createElement('div');
   body.className = 'app-page__body';
