@@ -20,11 +20,3 @@ Features:
 Kids Chores is designed to communicate with external services through webhooks. This allows users to connect their own automation platforms and implement custom rules, point systems, and reward mechanisms.
 
 For example, an automation platform such as Homey could receive task completion events, evaluate reward conditions, and trigger actions such as unlocking additional screen time or other connected features.
-
-### Installation
-
-1. Download or clone this repository.
-2. ZIP the `kids-chores` folder.
-3. Ensure `module.json` is located at the root of the ZIP archive.
-4. In Yuvomi, navigate to **Settings → Modules → Add custom module**.
-5. Upload the ZIP archive.
