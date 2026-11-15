@@ -1,8 +1,8 @@
 # Weather
 
-A Norway-only weather page for Yuvomi. The hours come from MET Locationforecast. The overview tile opens a graph that switches between one day and two days.
+Weather data from the Norwegian Meteorological Institute, on a page for Yuvomi. The overview tile opens a view that switches between one day and two days.
 
-Install the folder as a custom module. Yuvomi does not run anything in this folder, and the page cannot call MET itself.
+Install the folder as a custom module. Yuvomi does not run anything in this folder, and the page cannot call MET itself. Opening the page still works: it reads the forecast Yuvomi already fetches for the household. Pick a place in Norway under Settings, and that place is saved as the household weather location.
 
 Zip it so `module.json` is at the archive root:
 
@@ -12,11 +12,11 @@ cd met-weather && zip -r ../met-weather.zip .
 
 Settings → Modules → Add custom module, then enable Weather. Updating from GitHub asks to replace the installed version with the version in this file. Confirming that replace turns the module off. Turn Weather on again under Active modules, then reload the overview.
 
-The graph stays empty until a place is saved and the service below is running.
+Until a place in Norway is saved, the page says so. It does not ask for a separate process.
 
 ## Service
 
-A separate Node process fetches the forecast. It does not read or write `yuvomi.db`. Yuvomi will not start it.
+An optional Node process fetches MET Locationforecast and draws the hours. It does not read or write `yuvomi.db`. Yuvomi will not start it. Without it, the page uses Yuvomi's weather API instead of the hour graph.
 
 ```sh
 YUVOMI_INTERNAL_URL=http://127.0.0.1:3000 node service/server.js
@@ -28,7 +28,7 @@ The service checks the browser session with `GET {YUVOMI_INTERNAL_URL}/api/v1/au
 
 MET is called as `yuvomi-met-weather/1.0 https://github.com/experiment-no/yuvomi-modules`. Coordinates are rounded to four decimal places. A response is kept until its `Expires` header, and the next request sends `If-Modified-Since`. Place search uses Kartverket's stedsnavn register, and the server stores the place id, then resolves the coordinates again before asking MET.
 
-The page credits [Meteorologisk institutt](https://www.met.no/) and [Kartverket](https://www.kartverket.no/).
+With the service running, the page credits [Meteorologisk institutt](https://www.met.no/) and [Kartverket](https://www.kartverket.no/). Without it, the same credit names Meteorologisk institutt and [Open-Meteo](https://open-meteo.com/), which is what delivers the forecast through Yuvomi.
 
 ### nginx
 

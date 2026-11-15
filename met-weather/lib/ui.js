@@ -23,6 +23,18 @@ export function locale() {
   return lang && lang.toLowerCase().startsWith('nb') ? 'nb' : (lang && lang.toLowerCase().startsWith('en') ? 'en' : 'nb');
 }
 
+export function dayLabel(date, lang = locale()) {
+  const parsed = new Date(`${date}T12:00:00Z`);
+  if (!Number.isFinite(parsed.getTime())) return String(date || '');
+  const tag = lang === 'nb' ? 'nb-NO' : 'en-GB';
+  return new Intl.DateTimeFormat(tag, {
+    timeZone: TIME_ZONE,
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  }).format(parsed);
+}
+
 export function hourLabel(iso, withDay, lang = locale()) {
   const date = new Date(iso);
   const tag = lang === 'nb' ? 'nb-NO' : 'en-GB';

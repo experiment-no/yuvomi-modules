@@ -1,5 +1,7 @@
 /**
  * Shared by the overview widget and the weather page.
+ * The forecast comes from the sidecar when it is running, and from
+ * Yuvomi's own weather API otherwise.
  */
 
 import { t } from '/i18n.js';
@@ -23,7 +25,7 @@ export async function weatherApi(path, options = {}) {
   try {
     if (path === 'forecast') return await client.forecast(signal);
     if (path === 'places') return await client.places(options.query || '', signal);
-    if (path === 'place') return await client.savePlace(options.id, signal);
+    if (path === 'place') return await client.savePlace(options.place, signal);
     throw new WeatherError('invalid', 404);
   } catch (err) {
     if (err?.name === 'AbortError') throw err;

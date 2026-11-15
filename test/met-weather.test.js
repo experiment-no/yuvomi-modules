@@ -10,16 +10,18 @@ import {
   PREFIX,
   compass,
   extent,
+  forecastFromHost,
   forecastFromMet,
   inNorway,
   layoutChart,
   roundCoord,
   sliceHours,
+  symbolFromWmo,
   symbolIcon,
   symbolKey,
 } from '../met-weather/lib/forecast.js';
 import { USER_AGENT, createMetClient, forecastUrl } from '../met-weather/lib/met.js';
-import { placeFromLookup, placesFromSearch } from '../met-weather/lib/places.js';
+import { placeFromLookup, placeFromPreferences, placesFromGeocode, placesFromSearch } from '../met-weather/lib/places.js';
 import { createServer } from '../met-weather/service/server.js';
 
 const NOW = new Date('2026-11-15T12:30:00Z');
@@ -341,26 +343,174 @@ test('the sidecar checks the session, saves a Norwegian place, and serves the fo
   }
 });
 
-test('the browser client treats a missing service as unavailable', async () => {
-  const previous = globalThis.fetch;
-  try {
-    globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
-    await assert.rejects(() => createClient().forecast(), (err) => err instanceof WeatherError && err.reason === 'service');
-    globalThis.fetch = async () => ({ status: 404, text: async () => '' });
-    await assert.rejects(() => createClient().places('Oslo'), (err) => err.reason === 'service');
-    globalThis.fetch = async () => ({
+function hostWeather() {
+  return {
+    data: {
+      provider: 'open-meteo',
+      city: 'Oslo',
+      units: 'metric',
+      current: {
+        temp: 8,
+        wind_speed: 18,
+        icon: 'cloud',
+        desc: 'wmo.3',
+      },
+      today: { date: '2026-11-15', temp_min: 4, temp_max: 9, icon: 'cloud', desc: 'wmo.3' },
+      forecast: [
+        { date: '2026-11-16', temp_min: 2, temp_max: 7, icon: 'cloud-rain', desc: 'wmo.63' },
+      ],
+    },
+  };
+}
+
+test('a place outside Norway is not taken from Yuvomi settings', () => {
+  assert.equal(placeFromPreferences({ weather_lat: '52.52', weather_lon: '13.405', weather_city: 'Berlin' }), null);
+  assert.equal(placeFromPreferences({
+    weather_provider: 'openweathermap',
+    weather_lat: '59.9139',
+    weather_lon: '10.7522',
+    weather_city: 'Oslo',
+  }), null);
+  assert.deepEqual(placeFromPreferences({
+    weather_source: { provider: 'open-meteo', lat: '60.39', lon: '5.32', city: 'Bergen' },
+  }), {
+    id: null,
+    name: 'Bergen',
+    municipality: '',
+    county: '',
+    lat: 60.39,
+    lon: 5.32,
+  });
+  assert.deepEqual(placeFromPreferences({
+    weather_lat: '59.9139',
+    weather_lon: '10.7522',
+    weather_city: 'Oslo',
+    weather_user: { lat: '69.6546', lon: '18.9637', city: 'Tromsø' },
+  }), {
+    id: null,
+    name: 'Tromsø',
+    municipality: '',
+    county: '',
+    lat: 69.6546,
+    lon: 18.9637,
+  });
+  const places = placesFromGeocode([
+    { name: 'Tromsø', country_code: 'NO', latitude: 69.649, longitude: 18.955, admin1: 'Troms', admin2: 'Tromsø' },
+    { name: 'Stockholm', country_code: 'SE', latitude: 59.33, longitude: 18.07, admin1: 'Stockholm' },
+  ]);
+  assert.equal(places.length, 1);
+  assert.equal(places[0].name, 'Tromsø');
+  assert.equal(places[0].county, 'Troms');
+});
+
+test('Yuvomi weather becomes a day view in metres per second', () => {
+  const view = forecastFromHost(hostWeather());
+  assert.equal(view.configured, true);
+  assert.equal(view.source, 'host');
+  assert.equal(view.hours.length, 0);
+  assert.equal(view.days.length, 2);
+  assert.equal(view.current.temp, 8);
+  assert.equal(view.current.symbol, 'cloudy');
+  assert.ok(Math.abs(view.current.wind - 5) < 0.05);
+  assert.equal(view.days[1].symbol, 'rain');
+  assert.equal(symbolFromWmo('wmo.0', 'moon'), 'clearsky_night');
+  assert.equal(forecastFromHost({ data: null, reason: 'not_configured' }).configured, false);
+  assert.equal(forecastFromHost({ reason: 'upstream_error' }).error, 'upstream');
+});
+
+test('a missing sidecar reads Yuvomi weather instead of failing', async () => {
+  const calls = [];
+  const puts = [];
+  const hostApi = {
+    async get(path) {
+      calls.push(path);
+      if (path === '/preferences') {
+        return { data: { weather_lat: '59.9139', weather_lon: '10.7522', weather_city: 'Oslo' } };
+      }
+      if (path === '/weather') return hostWeather();
+      if (path.startsWith('/weather/geocode')) {
+        return {
+          data: [
+            { name: 'Oslo', country_code: 'NO', latitude: 59.9139, longitude: 10.7522, admin1: 'Oslo' },
+            { name: 'Berlin', country_code: 'DE', latitude: 52.52, longitude: 13.405, admin1: 'Berlin' },
+          ],
+        };
+      }
+      throw new Error(path);
+    },
+    async put(path, body) {
+      puts.push({ path, body });
+      return { data: {} };
+    },
+  };
+  const absent = async () => ({ status: 404, text: async () => '' });
+  const client = createClient({ fetchImpl: absent, hostApi });
+  const forecast = await client.forecast();
+  assert.equal(forecast.configured, true);
+  assert.equal(forecast.place.name, 'Oslo');
+  assert.equal(forecast.days.length, 2);
+  assert.deepEqual(calls, ['/preferences', '/weather']);
+
+  const abroad = createClient({
+    fetchImpl: absent,
+    hostApi: {
+      async get(path) {
+        assert.equal(path, '/preferences');
+        return { data: { weather_lat: '52.52', weather_lon: '13.405', weather_city: 'Berlin' } };
+      },
+    },
+  });
+  const hidden = await abroad.forecast();
+  assert.equal(hidden.configured, false);
+
+  const places = await client.places('Os');
+  assert.equal(places.places.length, 1);
+  assert.equal(places.places[0].name, 'Oslo');
+  const saved = await client.savePlace(places.places[0]);
+  assert.equal(saved.place.name, 'Oslo');
+  assert.equal(puts[0].path, '/preferences');
+  assert.equal(puts[0].body.weather_provider, 'open-meteo');
+  assert.equal(puts[0].body.weather_lat, 59.9139);
+  assert.equal(puts[0].body.weather_user.city, 'Oslo');
+  await assert.rejects(
+    () => client.savePlace({ name: 'Berlin', lat: 52.52, lon: 13.405 }),
+    (err) => err instanceof WeatherError && err.reason === 'norway',
+  );
+});
+
+test('the sidecar answer is used when the service is there', async () => {
+  let hostCalled = false;
+  const client = createClient({
+    hostApi: { async get() { hostCalled = true; return {}; } },
+    fetchImpl: async () => ({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({
+        configured: true,
+        place: { name: 'Bergen' },
+        current: { temp: 11 },
+        hours: [{ time: '2026-11-15T12:00:00.000Z', temp: 11 }],
+      }),
+    }),
+  });
+  const forecast = await client.forecast();
+  assert.equal(hostCalled, false);
+  assert.equal(forecast.place.name, 'Bergen');
+  const rejected = createClient({
+    hostApi: null,
+    fetchImpl: async () => ({
       status: 400,
       text: async () => JSON.stringify({ reason: 'norway', csrfToken: 't' }),
-    });
-    await assert.rejects(() => createClient().savePlace(1), (err) => err.reason === 'norway');
-  } finally {
-    globalThis.fetch = previous;
-  }
+    }),
+  });
+  await assert.rejects(() => rejected.savePlace({ id: 1, name: 'Ute', lat: 40, lon: 10 }), (err) => err.reason === 'norway');
 });
 
 test('the manifest and both languages describe the same weather module', () => {
   const manifest = JSON.parse(fs.readFileSync(new URL('../met-weather/module.json', import.meta.url), 'utf8'));
   assert.equal(manifest.id, 'met-weather');
+  assert.equal(manifest.version, '1.1.0');
+  assert.equal(manifest.description, 'Værdata fra Norsk meteorologisk institutt');
   assert.equal(manifest.settings.labelKey, 'settings.title');
   assert.equal(manifest.capabilities.api.prefix, '/api/extensions/met-weather');
   assert.equal(manifest.capabilities.widgets[0].entry, 'widgets/forecast.js');

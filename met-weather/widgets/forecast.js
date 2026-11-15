@@ -76,13 +76,19 @@ function draw(container, data, signal) {
     const meta = document.createElement('p');
     meta.className = 'mw-widget__meta';
     const condition = tr(`symbol.${symbolKey(data.current.symbol)}`);
+    const today = data.days?.[0];
+    const span = today && Number.isFinite(today.low) && Number.isFinite(today.high)
+      ? tr('page.highLow', { low: formatNumber(today.low, 1), high: formatNumber(today.high, 1) })
+      : '';
     meta.textContent = [
       data.place?.name,
       condition.startsWith('extensions.') ? '' : condition,
+      span,
     ].filter(Boolean).join(' · ');
     text.append(temp, meta);
     row.append(symbol, text);
-    body.append(row, spark(sliceHours(data.hours, 1)));
+    body.append(row);
+    if (data.hours?.length) body.append(spark(sliceHours(data.hours, 1)));
   }
 
   container.replaceChildren(header(data, signal), body);
