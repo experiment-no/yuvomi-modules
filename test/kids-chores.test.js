@@ -158,14 +158,22 @@ test('a Homey address keeps its event name when the chore is completed', async (
   });
   state = created.state;
   const hooks = calls();
-  hooks.rule = { status: 200, body: 'ok' };
+  hooks.rule = { status: 404, body: 'Webhook Not Found' };
   const done = await ask(state, 'POST', '/complete', { id: created.body.chore.id }, admin, hooks);
   assert.equal(done.status, 200);
   assert.equal(done.body.open.length, 0);
-  assert.equal(hooks.log[0].payload.event, 'ella_checkin');
-  assert.equal(hooks.log[0].payload.state, 'yes');
-  assert.equal(hooks.log[0].payload.done, true);
-  assert.equal(hooks.log[0].payload.points, 1);
+  assert.deepEqual(hooks.log[0].payload, {
+    event: 'ella_checkin',
+    state: 'yes',
+    done: true,
+    points: 1,
+  });
+  hooks.rule = { status: 200, body: { ok: false } };
+  state = done.state;
+  state.completions = {};
+  const blocked = await ask(state, 'POST', '/complete', { id: created.body.chore.id }, admin, hooks);
+  assert.equal(blocked.status, 409);
+  assert.equal(blocked.body.reason, 'webhook_denied');
 });
 
 test('chore rules: limit, reorder, day, lock, webhook, goal once, reset, prune', async () => {
