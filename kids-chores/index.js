@@ -1,7 +1,7 @@
 import { createClient } from './lib/client.js';
 import { loadMembers, memberName } from './lib/members.js';
 import { msUntilNextDate } from './lib/logic.js';
-import { STYLE_HREF, button, ensureStyle, errorBody, listen, progressMark, showEmpty, showToast, tr } from './lib/ui.js';
+import { STYLE_HREF, boardSignature, button, ensureStyle, errorBody, listen, progressMark, showEmpty, showToast, tr, watchAdmin } from './lib/ui.js';
 
 const client = createClient();
 
@@ -38,9 +38,21 @@ async function paint(container, signal, token) {
   }
   if (stopped(container, signal, token)) return;
   draw(container, data, signal, token);
+  watchAdmin(container, token, data.role, signal, async () => {
+    try {
+      const next = await client.today(signal);
+      if (stopped(container, signal, token)) return;
+      if (boardSignature(next) === container._kcSig) return;
+      next.members = container._kcMembers;
+      draw(container, next, signal, token);
+    } catch (err) {
+      if (err?.name === 'AbortError' || stopped(container, signal, token)) return;
+    }
+  });
 }
 
 function draw(container, data, signal, token) {
+  container._kcSig = boardSignature(data);
   clearTimeout(container._kcMidnight);
   const root = document.createElement('div');
   root.className = 'kc-page';

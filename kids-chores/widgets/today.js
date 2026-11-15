@@ -2,7 +2,7 @@ import { t } from '/i18n.js';
 
 import { choresApi, moduleDisplayTitle } from '../browser.js';
 import { loadMembers, memberName } from '../lib/members.js';
-import { STYLE_HREF, ensureStyle, errorBody, listen, progressMark, showEmpty, showToast, tr } from '../lib/ui.js';
+import { STYLE_HREF, boardSignature, ensureStyle, errorBody, listen, progressMark, showEmpty, showToast, tr, watchAdmin } from '../lib/ui.js';
 
 const ACCENT = '#EA580C';
 
@@ -40,6 +40,17 @@ export async function renderWidget(container, context = {}) {
   }
   if (signal?.aborted || container._kcToken !== token) return;
   draw(container, data, signal, token);
+  watchAdmin(container, token, data.role, signal, async () => {
+    try {
+      const next = await choresApi('/today', { signal });
+      if (signal?.aborted || container._kcToken !== token) return;
+      if (boardSignature(next) === container._kcSig) return;
+      next.members = container._kcMembers;
+      draw(container, next, signal, token);
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+    }
+  });
 }
 
 function applyAccent(container) {
@@ -49,6 +60,7 @@ function applyAccent(container) {
 }
 
 function draw(container, data, signal, token) {
+  container._kcSig = boardSignature(data);
   const settings = data?.settings && typeof data.settings === 'object' ? data.settings : {};
   const items = Array.isArray(data?.items) ? data.items : [];
   const open = Array.isArray(data?.open) ? data.open : items.filter((item) => item && !item.done && !item.locked);

@@ -6,7 +6,9 @@
  * anyone else. Notes are already shared with every signed-in member. The
  * chore list lives in one note named "Kids Chores". Completions live in a
  * second note per person ("Kids Chores log") so a member can record their
- * own check-off without permission to edit someone else's note.
+ * own check-off without permission to edit someone else's note. A Homey call
+ * that the browser cannot send is stored on that same note and sent later
+ * from an administrator session.
  */
 
 import { commit, handle, openDocument, project } from './logic.js';
@@ -71,15 +73,32 @@ export async function runHousehold(options) {
   }
 
   const before = pack(doc, notes, actor.id);
+  if (options.method === 'GET' && actor.role === 'admin' && typeof options.trySend === 'function') {
+    await flushOutbox(doc, options.trySend);
+  }
+  const queued = [];
   const result = await handle(project(doc, actor), {
     method: options.method,
     path: options.path,
     body: options.body,
     now: options.now instanceof Date ? options.now : new Date(),
     actor,
-    postWebhook: options.postWebhook,
+    postWebhook: async (url, payload) => {
+      if (typeof options.trySend === 'function') {
+        const sent = await options.trySend(url, payload);
+        if (sent) return sent;
+      } else if (typeof options.postWebhook === 'function') {
+        return options.postWebhook(url, payload);
+      }
+      if (doc.settings.shareAcrossUsers === false) throw new Error('webhook');
+      const item = pendingItem(url, payload);
+      if (!item) throw new Error('webhook');
+      queued.push(item);
+      return { status: 204, body: '' };
+    },
   });
   if (result.status >= 400) return result;
+  if (queued.length) appendOutbox(doc, actor.id, queued);
   commit(doc, actor, result.state);
   await persist(options, doc, before, notes);
   try { options.writeLocal?.(doc); } catch { /* the note is the shared copy */ }
@@ -227,6 +246,73 @@ function moveEntry(entry, from, to) {
   }
 }
 
+async function flushOutbox(doc, trySend) {
+  if (!doc.outbox) return;
+  for (const userId of Object.keys(doc.outbox)) {
+    const left = [];
+    for (const item of doc.outbox[userId]) {
+      let sent = null;
+      try {
+        sent = await trySend(item.url, item.payload);
+      } catch (err) {
+        if (err?.name === 'AbortError') throw err;
+        sent = null;
+      }
+      if (sent == null) left.push(item);
+    }
+    if (left.length) doc.outbox[userId] = left;
+    else delete doc.outbox[userId];
+  }
+}
+
+function appendOutbox(doc, userId, items) {
+  if (!ID_RE.test(userId)) return;
+  const next = cleanPendingList([...(doc.outbox?.[userId] || []), ...items]).slice(-20);
+  if (!next.length) return;
+  if (!doc.outbox) doc.outbox = {};
+  doc.outbox[userId] = next;
+}
+
+function pendingItem(url, payload) {
+  return cleanPendingItem({ id: pendingId(), url, payload });
+}
+
+function pendingId() {
+  return `w-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function cleanPendingList(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const item of list) {
+    const clean = cleanPendingItem(item);
+    if (!clean) continue;
+    out.push(clean);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+function cleanPendingItem(item) {
+  if (!item || typeof item !== 'object') return null;
+  const url = typeof item.url === 'string' ? item.url : '';
+  if (!/^https?:\/\//.test(url) || url.length > 2048) return null;
+  const payload = item.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  let body;
+  try { body = JSON.stringify(payload); } catch { return null; }
+  if (body.length > 2000) return null;
+  const id = typeof item.id === 'string' && ID_RE.test(item.id) ? item.id : pendingId();
+  return { id, url, payload };
+}
+
+function rememberPending(doc, userId, pending) {
+  const items = cleanPendingList(pending);
+  if (!items.length) return;
+  if (!doc.outbox) doc.outbox = {};
+  doc.outbox[userId] = items;
+}
+
 function countChores(doc) {
   const shared = doc?.shared?.chores?.length || 0;
   const personal = Object.values(doc?.private || {}).reduce((sum, bucket) => sum + (bucket?.chores?.length || 0), 0);
@@ -257,6 +343,7 @@ function documentFrom(data, doneNotes) {
 
 function applySlice(doc, userId, slice) {
   if (!slice || typeof slice !== 'object') return;
+  rememberPending(doc, userId, slice.pending);
   if (slice.private) {
     const wrapped = openDocument({ version: 2, private: { [userId]: slice.private } });
     if (wrapped.private[userId]) doc.private[userId] = wrapped.private[userId];
@@ -296,7 +383,11 @@ function pack(doc, notes, actorId) {
     if (!decoded || decoded.broken || !ID_RE.test(decoded.extra)) continue;
     existing.set(decoded.extra, note);
   }
-  const ids = new Set([...userIds(doc, share), ...existing.keys()]);
+  const ids = new Set([
+    ...userIds(doc, share),
+    ...existing.keys(),
+    ...Object.keys(doc.outbox || {}).filter((id) => ID_RE.test(id)),
+  ]);
   const dones = new Map();
   const carried = {};
   for (const userId of [...ids].filter((id) => ID_RE.test(id)).sort()) {
@@ -338,15 +429,18 @@ function collectIds(entry, ids) {
 }
 
 function sliceFor(doc, userId, share) {
+  const pending = cleanPendingList(doc.outbox?.[userId]);
   if (!share) {
     const bucket = doc.private?.[userId] || { chores: [], completions: {}, goals: {} };
-    return {
+    const slice = {
       private: {
         chores: (bucket.chores || []).map(compactChore),
         completions: bucket.completions || {},
         goals: bucket.goals || {},
       },
     };
+    if (pending.length) slice.pending = pending;
+    return slice;
   }
   const completions = {};
   const goals = {};
@@ -362,7 +456,9 @@ function sliceFor(doc, userId, share) {
     if (!entry || typeof entry !== 'object' || typeof entry.at === 'string') continue;
     if (entry[userId]) goals[date] = entry[userId];
   }
-  return { completions, goals };
+  const slice = { completions, goals };
+  if (pending.length) slice.pending = pending;
+  return slice;
 }
 
 function legacyOf(doc, share) {
@@ -416,6 +512,7 @@ function compactSubs(subscriptions) {
 
 function emptySlice(slice) {
   if (!slice) return true;
+  if (slice.pending?.length) return false;
   if (slice.private) {
     const bucket = slice.private;
     return !bucket.chores?.length
