@@ -230,8 +230,10 @@ export function createClient() {
     reorder(ids, signal) {
       return request('PUT', '/chores/reorder', { ids }, signal);
     },
-    complete(id, signal) {
-      return request('POST', '/complete', { id }, signal);
+    complete(id, signal, forUserId) {
+      const body = { id };
+      if (forUserId) body.forUserId = forUserId;
+      return request('POST', '/complete', body, signal);
     },
     resetToday(signal) {
       return request('POST', '/reset-today', {}, signal);

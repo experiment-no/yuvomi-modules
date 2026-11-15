@@ -105,6 +105,7 @@ function cloneChore(chore) {
     requireAboveDone: Boolean(chore.requireAboveDone),
     webhookUrl: chore.webhookUrl || null,
     resetWebhookUrl: chore.resetWebhookUrl || null,
+    assigneeIds: copyAssigneeIds(chore.assigneeIds),
     excludedMemberIds: cleanMemberIds(chore.excludedMemberIds),
   };
 }
@@ -125,6 +126,7 @@ export function normalizeState(raw) {
     progressIcon: isProgressIcon(settings.progressIcon) ? settings.progressIcon : 'sun',
     shareAcrossUsers: settings.shareAcrossUsers !== false,
   };
+  state.followingIds = cleanMemberIds(raw.followingIds);
   if (Array.isArray(raw.chores)) {
     state.chores = raw.chores.slice(0, MAX_CHORES).map((chore, index) => normalizeChore(chore, index)).filter(Boolean);
   }
@@ -195,6 +197,7 @@ function normalizeChore(raw, index) {
     requireAboveDone: raw.requireAboveDone === true,
     webhookUrl: typeof raw.webhookUrl === 'string' && raw.webhookUrl ? raw.webhookUrl : null,
     resetWebhookUrl: typeof raw.resetWebhookUrl === 'string' && raw.resetWebhookUrl ? raw.resetWebhookUrl : null,
+    assigneeIds: assigneeList(raw),
     excludedMemberIds: cleanMemberIds(raw.excludedMemberIds),
   };
 }
@@ -230,6 +233,18 @@ function cleanMemberIds(value) {
   return ids;
 }
 
+/** `null` means a chore saved before assignees: it still shows for everyone except exclusions. */
+function assigneeList(raw) {
+  if (!raw || typeof raw !== 'object' || !Object.hasOwn(raw, 'assigneeIds')) return null;
+  if (!Array.isArray(raw.assigneeIds)) return null;
+  return cleanMemberIds(raw.assigneeIds);
+}
+
+function copyAssigneeIds(value) {
+  if (value == null) return null;
+  return cleanMemberIds(value);
+}
+
 /** A completion stored as `{ at, by }` counts for every member. Newer rows are per user id. */
 export function doneFor(entry, userId) {
   if (!entry || typeof entry !== 'object') return false;
@@ -238,11 +253,28 @@ export function doneFor(entry, userId) {
   return Boolean(entry['*'] || (id && entry[id]));
 }
 
-export function choreIncludes(chore, settings, actor) {
+/**
+ * Who has this chore on their own list. Sharing off shows the account's list.
+ * No assignee list means a generic chore: it is not tied to a child, and every
+ * member sees it on their own list. An older chore with a missing list does the
+ * same, except ids in `excludedMemberIds`. A non-empty list is only those people.
+ * Follow boards skip generic chores so a parent does not see them twice.
+ */
+export function choreFor(chore, settings, userId, options = {}) {
   if (settings?.shareAcrossUsers === false) return true;
-  const excluded = cleanMemberIds(chore?.excludedMemberIds);
-  if (!excluded.length || actor?.id == null || actor.id === '') return true;
-  return !excluded.includes(String(actor.id));
+  const assigned = copyAssigneeIds(chore?.assigneeIds);
+  const id = userId == null || userId === '' ? '' : String(userId);
+  if (assigned == null || assigned.length === 0) {
+    if (options.legacy === 'skip') return false;
+    if (assigned == null) {
+      const excluded = cleanMemberIds(chore?.excludedMemberIds);
+      if (!excluded.length || !id) return true;
+      return !excluded.includes(id);
+    }
+    return true;
+  }
+  if (!id) return false;
+  return assigned.includes(id);
 }
 
 function isFlatGoal(entry) {
@@ -281,17 +313,21 @@ export function shouldShowOnWall(data) {
   return Array.isArray(data.items) && data.items.length > 0;
 }
 
-export function buildToday(state, now = new Date(), actor = null) {
+export function buildToday(state, now = new Date(), actor = null, targetUserId) {
+  const viewerId = actor?.id == null || actor.id === '' ? '' : String(actor.id);
+  const targetId = targetUserId === undefined ? viewerId : String(targetUserId);
   const { date, weekday } = zonedCalendar(now, state.settings.timezone);
   const doneMap = state.completions[date] || {};
   const scheduled = state.chores
-    .filter((chore) => chore.active && chore.days.includes(weekday) && choreIncludes(chore, state.settings, actor))
+    .filter((chore) => chore.active && chore.days.includes(weekday) && choreFor(chore, state.settings, targetId, {
+      legacy: targetId === viewerId ? 'own' : 'skip',
+    }))
     .slice()
     .sort((a, b) => a.sort - b.sort || a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
 
   const items = scheduled.map((chore, index) => {
-    const done = doneFor(doneMap[chore.id], actor?.id);
-    const earlierOpen = scheduled.slice(0, index).some((earlier) => !doneFor(doneMap[earlier.id], actor?.id));
+    const done = doneFor(doneMap[chore.id], targetId);
+    const earlierOpen = scheduled.slice(0, index).some((earlier) => !doneFor(doneMap[earlier.id], targetId));
     const locked = !done && chore.requireAboveDone === true && earlierOpen;
     return {
       id: chore.id,
@@ -302,6 +338,7 @@ export function buildToday(state, now = new Date(), actor = null) {
       requireAboveDone: chore.requireAboveDone === true,
       done,
       locked,
+      forUserId: targetId || 'local',
     };
   });
 
@@ -312,6 +349,7 @@ export function buildToday(state, now = new Date(), actor = null) {
   return {
     date,
     weekday,
+    userId: targetId || 'local',
     items,
     open,
     earned,
@@ -320,6 +358,25 @@ export function buildToday(state, now = new Date(), actor = null) {
     goalReached: goal > 0 && earned >= goal,
     allDone: items.length > 0 && items.every((item) => item.done),
   };
+}
+
+/** One board per person: the viewer's own chores, then each child they follow. */
+export function buildBoards(state, now = new Date(), actor = null) {
+  const viewerId = actor?.id == null || actor.id === '' ? 'local' : String(actor.id);
+  const share = state.settings?.shareAcrossUsers !== false;
+  const following = share
+    ? cleanMemberIds(state.followingIds).filter((id) => id !== viewerId)
+    : [];
+  const own = buildToday(state, now, actor, viewerId);
+  const boards = [];
+  const followed = [];
+  for (const id of following) {
+    const board = buildToday(state, now, actor, id);
+    if (board.items.length) followed.push(board);
+  }
+  if (own.items.length || followed.length === 0) boards.push(own);
+  boards.push(...followed);
+  return boards;
 }
 
 function meta(actor, extra = {}) {
@@ -344,19 +401,41 @@ function fail(status, reason, actor, state) {
   };
 }
 
-export function todayBody(state, actor, now) {
-  const view = buildToday(state, now, actor);
+export function todayBody(state, actor, now, focusUserId) {
+  const boards = buildBoards(state, now, actor);
+  const focus = focusUserId ? boards.find((board) => board.userId === String(focusUserId)) : null;
+  const single = boards.length === 1 ? boards[0] : null;
+  const score = focus || single;
+  const items = score ? score.items : boards.flatMap((board) => board.items);
+  const open = score ? score.open : boards.flatMap((board) => board.open);
+  const earned = score
+    ? score.earned
+    : items.reduce((sum, item) => (item.done ? sum + item.points : sum), 0);
+  const goal = state.settings.pointGoal;
+  const percent = score ? score.percent : (goal > 0 ? Math.min(100, Math.round((earned / goal) * 100)) : 0);
   return {
-    date: view.date,
-    weekday: view.weekday,
+    date: (score || boards[0]).date,
+    weekday: (score || boards[0]).weekday,
     settings: publicSettings(state.settings, false),
-    items: view.items,
-    open: view.open,
-    earned: view.earned,
-    goal: view.goal,
-    percent: view.percent,
-    goalReached: view.goalReached,
-    allDone: view.allDone,
+    viewerId: actor?.id == null || actor.id === '' ? 'local' : String(actor.id),
+    followingIds: cleanMemberIds(state.followingIds),
+    boards: boards.map((board) => ({
+      userId: board.userId,
+      items: board.items,
+      open: board.open,
+      earned: board.earned,
+      goal: board.goal,
+      percent: board.percent,
+      goalReached: board.goalReached,
+      allDone: board.allDone,
+    })),
+    items,
+    open,
+    earned,
+    goal,
+    percent,
+    goalReached: score ? score.goalReached : boards.some((board) => board.goalReached),
+    allDone: score ? score.allDone : (items.length > 0 && items.every((item) => item.done)),
     congratsMessage: state.settings.congratsMessage,
     progressIcon: state.settings.progressIcon,
     ...meta(actor),
@@ -530,8 +609,20 @@ function choreFromBody(body, previous) {
   if (webhook.error) return { error: webhook.error };
   const reset = parseWebhookUrl(resetSource);
   if (reset.error) return { error: reset.error };
+  let assigneeIds;
+  if (body.assigneeIds !== undefined) {
+    if (!Array.isArray(body.assigneeIds)) return { error: 'invalid' };
+    assigneeIds = cleanMemberIds(body.assigneeIds);
+    if (assigneeIds.length !== body.assigneeIds.length) return { error: 'invalid' };
+  } else if (previous) {
+    assigneeIds = copyAssigneeIds(previous.assigneeIds);
+  } else {
+    assigneeIds = null;
+  }
   let excludedMemberIds;
-  if (body.excludedMemberIds !== undefined) {
+  if (body.assigneeIds !== undefined) {
+    excludedMemberIds = [];
+  } else if (body.excludedMemberIds !== undefined) {
     if (!Array.isArray(body.excludedMemberIds)) return { error: 'invalid' };
     excludedMemberIds = cleanMemberIds(body.excludedMemberIds);
     if (excludedMemberIds.length !== body.excludedMemberIds.length) return { error: 'invalid' };
@@ -549,6 +640,7 @@ function choreFromBody(body, previous) {
       requireAboveDone,
       webhookUrl: webhook.url,
       resetWebhookUrl: reset.url,
+      assigneeIds,
       excludedMemberIds,
     },
   };
@@ -562,6 +654,7 @@ function choresBody(state, actor) {
   return {
     chores: sortChores(state.chores).map(cloneChore),
     settings: publicSettings(state.settings, true),
+    followingIds: cleanMemberIds(state.followingIds),
     ...meta(actor),
   };
 }
@@ -638,8 +731,22 @@ export async function handle(state, request) {
   if (method === 'PUT' && path === '/settings') {
     const applied = applySettings(next, request.body);
     if (applied.error) return fail(400, applied.error, actor, state);
+    if (request.body?.followingIds !== undefined) {
+      if (!Array.isArray(request.body.followingIds)) return fail(400, 'invalid', actor, state);
+      const followingIds = cleanMemberIds(request.body.followingIds);
+      if (followingIds.length !== request.body.followingIds.length) return fail(400, 'invalid', actor, state);
+      next.followingIds = followingIds;
+    }
     next.settings = applied.settings;
-    return { status: 200, state: next, body: { settings: publicSettings(next.settings, true), ...meta(actor) } };
+    return {
+      status: 200,
+      state: next,
+      body: {
+        settings: publicSettings(next.settings, true),
+        followingIds: cleanMemberIds(next.followingIds),
+        ...meta(actor),
+      },
+    };
   }
   if (method === 'POST' && path === '/chores') {
     if (next.chores.length >= MAX_CHORES) return fail(409, 'limit', actor, state);
@@ -698,21 +805,36 @@ function needFor(method, path) {
 async function complete(next, original, request, actor, now) {
   const id = request.body?.id;
   if (typeof id !== 'string' || !id) return fail(400, 'invalid', actor, original);
+  const viewerId = String(actor.id || 'local');
+  let userId = viewerId;
+  if (request.body?.forUserId !== undefined) {
+    if (typeof request.body.forUserId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(request.body.forUserId)) {
+      return fail(400, 'invalid', actor, original);
+    }
+    userId = request.body.forUserId;
+  }
+  const following = cleanMemberIds(next.followingIds);
+  const mayAct = userId === viewerId || (next.settings.shareAcrossUsers !== false && following.includes(userId));
+  if (!mayAct) return fail(404, 'missing', actor, original);
   const { date, weekday } = zonedCalendar(now, next.settings.timezone);
-  const userId = String(actor.id || 'local');
   const scheduled = next.chores
-    .filter((chore) => chore.active && chore.days.includes(weekday) && choreIncludes(chore, next.settings, actor))
+    .filter((chore) => chore.active && chore.days.includes(weekday) && choreFor(chore, next.settings, userId, {
+      legacy: userId === viewerId ? 'own' : 'skip',
+    }))
     .slice()
     .sort((a, b) => a.sort - b.sort || a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
   const chore = scheduled.find((item) => item.id === id);
   if (!chore) {
     const stored = next.chores.find((item) => item.id === id);
-    if (!stored || !choreIncludes(stored, next.settings, actor)) return fail(404, 'missing', actor, original);
+    const visible = stored && choreFor(stored, next.settings, userId, {
+      legacy: userId === viewerId ? 'own' : 'skip',
+    });
+    if (!visible) return fail(404, 'missing', actor, original);
     return fail(400, 'day', actor, original);
   }
   const doneMap = { ...(next.completions[date] || {}) };
   if (doneFor(doneMap[id], userId)) {
-    return { status: 200, state: next, body: todayBody(next, actor, now) };
+    return { status: 200, state: next, body: todayBody(next, actor, now, userId) };
   }
   const index = scheduled.findIndex((item) => item.id === id);
   const locked = chore.requireAboveDone === true
@@ -729,11 +851,13 @@ async function complete(next, original, request, actor, now) {
   }
 
   const previous = doneMap[id];
-  const slot = previous && typeof previous === 'object' && typeof previous.at !== 'string' ? { ...previous } : {};
+  const slot = previous && typeof previous === 'object' && typeof previous.at === 'string'
+    ? { '*': previous }
+    : (previous && typeof previous === 'object' ? { ...previous } : {});
   slot[userId] = { at: now.toISOString(), by: actor.name || userId };
   doneMap[id] = slot;
   next.completions[date] = doneMap;
-  const view = buildToday(next, now, actor);
+  const view = buildToday(next, now, actor, userId);
   const crossed = view.goalReached && !goalNotified(next.goals[date], userId);
   if (crossed) {
     const existing = next.goals[date];
@@ -753,7 +877,7 @@ async function complete(next, original, request, actor, now) {
       triggeredBy: actor.name || String(actor.id || ''),
     });
   }
-  return { status: 200, state: next, body: todayBody(next, actor, now) };
+  return { status: 200, state: next, body: todayBody(next, actor, now, userId) };
 }
 
 async function resetToday(next, request, actor, now) {
@@ -844,6 +968,7 @@ export function openDocument(raw) {
     settings: defaultSettings(),
     shared: emptyBucket(),
     private: {},
+    subscriptions: {},
   };
   if (!raw || typeof raw !== 'object') return doc;
   const legacy = Array.isArray(raw.chores) || (raw.settings && !raw.shared && !raw.private);
@@ -861,6 +986,12 @@ export function openDocument(raw) {
       doc.private[id] = bucketFrom(bucket);
     }
   }
+  if (!legacy && raw.subscriptions && typeof raw.subscriptions === 'object') {
+    for (const [id, list] of Object.entries(raw.subscriptions)) {
+      if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) continue;
+      doc.subscriptions[id] = cleanMemberIds(list);
+    }
+  }
   return doc;
 }
 
@@ -873,6 +1004,7 @@ export function project(doc, actor) {
     version: 2,
     settings: { ...doc.settings },
     ...copyBucket(bucket),
+    followingIds: cleanMemberIds(doc.subscriptions?.[id]),
   };
 }
 
@@ -891,6 +1023,8 @@ export function commit(doc, actor, state) {
     goals: copyBucket({ chores: [], completions: {}, goals: state.goals }).goals,
   };
   doc.settings = { ...state.settings };
+  if (!doc.subscriptions || typeof doc.subscriptions !== 'object') doc.subscriptions = {};
+  doc.subscriptions[id] = cleanMemberIds(state.followingIds);
   if (wasShared === nowShared) {
     if (nowShared) doc.shared = bucket;
     else doc.private[id] = bucket;
@@ -901,11 +1035,6 @@ export function commit(doc, actor, state) {
     doc.shared = emptyBucket();
     return doc;
   }
-  if (!doc.shared.chores.length) {
-    doc.shared = {
-      ...bucket,
-      chores: bucket.chores.map((chore) => ({ ...chore, excludedMemberIds: [] })),
-    };
-  }
+  if (!doc.shared.chores.length) doc.shared = bucket;
   return doc;
 }

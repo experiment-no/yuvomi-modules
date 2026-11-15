@@ -1,6 +1,7 @@
 import { t } from '/i18n.js';
 
 import { choresApi, moduleDisplayTitle } from '../browser.js';
+import { loadMembers, memberName } from '../lib/members.js';
 import { STYLE_HREF, ensureStyle, errorBody, listen, progressMark, showEmpty, showToast, tr } from '../lib/ui.js';
 
 const ACCENT = '#EA580C';
@@ -23,7 +24,10 @@ export async function renderWidget(container, context = {}) {
   if (signal?.aborted || container._kcToken !== token) return;
   let data;
   try {
-    data = await choresApi('/today', { signal });
+    const [today, members] = await Promise.all([choresApi('/today', { signal }), loadMembers(signal)]);
+    data = today;
+    data.members = members;
+    container._kcMembers = members;
   } catch (err) {
     if (err?.name === 'AbortError' || signal?.aborted || container._kcToken !== token) return;
     await showEmpty(container, {
@@ -64,29 +68,62 @@ function draw(container, data, signal, token) {
     return;
   }
 
+  const boards = Array.isArray(view.boards) && view.boards.length
+    ? view.boards
+    : [{
+      userId: view.viewerId,
+      items,
+      open,
+      earned: view.earned,
+      goal: view.goal,
+      percent: view.percent,
+      allDone: view.allDone,
+    }];
+  for (const board of boards) body.append(widgetBoard(board, view, signal, token, container));
+  container.replaceChildren(header(view, signal), body);
+  window.lucide?.createIcons({ el: container });
+}
+
+function widgetBoard(board, view, signal, token, container) {
+  const block = document.createElement('div');
+  block.className = 'kc-board';
+  const settings = view.settings || {};
+  const showName = board.userId && view.viewerId && board.userId !== view.viewerId;
+  if (showName) {
+    const name = document.createElement('p');
+    name.className = 'kc-board__name';
+    name.textContent = memberName(view.members, board.userId) || board.userId;
+    block.append(name);
+  }
   const progress = document.createElement('div');
   progress.className = 'kc-widget__progress';
-  progress.append(progressMark(view.percent, view.progressIcon || settings.progressIcon, 28));
+  progress.append(progressMark(board.percent, view.progressIcon || settings.progressIcon, 28));
   const score = document.createElement('span');
-  score.textContent = tr('page.score', { earned: view.earned ?? 0, goal: view.goal ?? settings.pointGoal ?? 0 });
+  score.textContent = tr('page.score', { earned: board.earned ?? 0, goal: board.goal ?? settings.pointGoal ?? 0 });
   progress.append(score);
-
   const list = document.createElement('div');
   list.className = 'kc-widget__list';
-  if (view.allDone) {
+  const boardItems = Array.isArray(board.items) ? board.items : [];
+  const boardOpen = Array.isArray(board.open) ? board.open : boardItems.filter((item) => item && !item.done && !item.locked);
+  if (!boardItems.length) {
+    const empty = document.createElement('p');
+    empty.className = 'kc-board__empty';
+    empty.textContent = tr('page.empty');
+    list.append(empty);
+  } else if (board.allDone) {
     const message = document.createElement('p');
     message.className = 'kc-congrats';
     message.textContent = view.congratsMessage || tr('page.congrats');
     list.append(message);
   } else {
     const canWrite = view.access === 'write';
-    for (const item of open) {
+    for (const item of boardOpen) {
       const row = document.createElement(canWrite ? 'button' : 'div');
       row.className = 'kc-chore kc-chore--compact';
       if (canWrite) {
         row.type = 'button';
         listen(row, 'click', () => {
-          void complete(container, item.id, signal, token);
+          void complete(container, item, signal, token);
         }, signal);
       }
       const name = document.createElement('span');
@@ -99,9 +136,8 @@ function draw(container, data, signal, token) {
       list.append(row);
     }
   }
-  body.append(progress, list);
-  container.replaceChildren(header(view, signal), body);
-  window.lucide?.createIcons({ el: container });
+  block.append(progress, list);
+  return block;
 }
 
 function header(data, signal) {
@@ -121,10 +157,13 @@ function header(data, signal) {
   text.className = 'widget__title-text';
   text.textContent = titleText;
   title.append(seal, text);
-  if (data.open.length > 0) {
+  const openCount = Array.isArray(data.boards) && data.boards.length
+    ? data.boards.reduce((sum, board) => sum + (Array.isArray(board.open) ? board.open.length : 0), 0)
+    : data.open.length;
+  if (openCount > 0) {
     const badge = document.createElement('span');
     badge.className = 'widget__badge';
-    badge.textContent = String(data.open.length);
+    badge.textContent = String(openCount);
     title.append(badge);
   }
   const link = document.createElement('a');
@@ -144,11 +183,17 @@ function header(data, signal) {
   return bar;
 }
 
-async function complete(container, id, signal, token) {
+async function complete(container, item, signal, token) {
   try {
-    const next = await choresApi('/complete', { method: 'POST', body: { id }, signal });
+    const body = { id: item.id };
+    if (item.forUserId) body.forUserId = item.forUserId;
+    const next = await choresApi('/complete', { method: 'POST', body, signal });
     if (signal?.aborted || container._kcToken !== token) return;
-    if (next.goalReached) showToast(tr('goal.toast'));
+    next.members = container._kcMembers;
+    const board = Array.isArray(next.boards)
+      ? next.boards.find((entry) => entry.userId === item.forUserId)
+      : null;
+    if (board ? board.goalReached : next.goalReached) showToast(tr('goal.toast'));
     draw(container, next, signal, token);
   } catch (err) {
     if (err?.name === 'AbortError' || signal?.aborted) return;

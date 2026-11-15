@@ -1,5 +1,6 @@
 import { createClient } from './lib/client.js';
 import { PROGRESS_ICONS, WEEKDAYS } from './lib/logic.js';
+import { loadMembers } from './lib/members.js';
 import {
   STYLE_HREF,
   button,
@@ -92,6 +93,7 @@ function settingsForm(data, signal, token, container) {
   const notify = toggleField(tr('settings.notifyAdmin'), settings.notifyAdmin !== false);
   const wall = toggleField(tr('settings.showOnWall'), settings.showOnWall === true);
   const share = toggleField(tr('settings.share'), settings.shareAcrossUsers !== false);
+  const follow = followPicker(data);
 
   form.append(
     field(tr('settings.displayTitle'), title),
@@ -105,6 +107,7 @@ function settingsForm(data, signal, token, container) {
     share.wrap,
     hint(tr('settings.shareHint')),
   );
+  if (follow) form.append(follow.field);
 
   const actions = document.createElement('div');
   actions.className = 'kc-actions';
@@ -142,6 +145,7 @@ function settingsForm(data, signal, token, container) {
         notifyAdmin: notify.input.checked,
         showOnWall: wall.input.checked,
         shareAcrossUsers: share.input.checked,
+        ...(follow ? { followingIds: follow.ids() } : {}),
         webhookUrl: webhook.value,
       }, signal);
       if (stopped(container, signal, token)) return;
@@ -234,11 +238,9 @@ function choreRow(chore, index, total, data, signal, token, container) {
   name.textContent = chore.title;
   const meta = document.createElement('span');
   meta.className = 'kc-row__meta';
-  const leftOut = leftOutNames(chore, data.members);
   meta.textContent = `${tr('chores.points', { points: chore.points })} · ${dayNames(chore.days)}`;
-  if (data.settings?.shareAcrossUsers !== false && leftOut) {
-    meta.textContent += ` · ${tr('chores.without', { names: leftOut })}`;
-  }
+  const assigned = assignmentLabel(chore, data);
+  if (assigned) meta.textContent += ` · ${assigned}`;
   main.append(name, meta);
   if (chore.requireAboveDone || chore.webhookUrl || chore.resetWebhookUrl) {
     const badges = document.createElement('span');
@@ -375,7 +377,7 @@ function editor(chore, data, signal, token, container) {
       days: WEEKDAYS.filter((_, index) => dayInputs[index].checked),
       active: active.input.checked,
       requireAboveDone: above.input.checked,
-      ...(members.ids ? { excludedMemberIds: members.ids() } : {}),
+      ...(members.ids ? { assigneeIds: members.ids() } : {}),
       webhookUrl: webhook.value,
       resetWebhookUrl: reset.value,
     };
@@ -470,10 +472,42 @@ function hint(text) {
   return el;
 }
 
-function leftOutNames(chore, members) {
-  const excluded = new Set((chore?.excludedMemberIds || []).map(String));
-  if (!excluded.size || !Array.isArray(members)) return '';
-  return members.filter((member) => excluded.has(member.id)).map((member) => member.name).join(', ');
+function assignmentLabel(chore, data) {
+  if (data.settings?.shareAcrossUsers === false) return '';
+  if (chore?.assigneeIds == null) return tr('chores.forEveryone');
+  if (!chore.assigneeIds.length) return tr('chores.generic');
+  const members = Array.isArray(data.members) ? data.members : [];
+  const ids = new Set(chore.assigneeIds.map(String));
+  const names = members.filter((member) => ids.has(member.id)).map((member) => member.name);
+  if (!names.length) return tr('chores.unassigned');
+  return tr('chores.forNames', { names: names.join(', ') });
+}
+
+function followPicker(data) {
+  if (data.settings?.shareAcrossUsers === false) return null;
+  const members = Array.isArray(data.members) ? data.members : [];
+  if (!members.length) return null;
+  const selected = new Set((data.followingIds || []).map(String));
+  const box = document.createElement('div');
+  box.className = 'kc-members';
+  const inputs = members.map((member) => {
+    const label = document.createElement('label');
+    label.className = 'kc-member kc-follow';
+    const inputEl = document.createElement('input');
+    inputEl.type = 'checkbox';
+    inputEl.checked = selected.has(member.id);
+    const text = document.createElement('span');
+    text.textContent = member.name;
+    label.append(inputEl, text);
+    box.append(label);
+    return { member, inputEl };
+  });
+  return {
+    field: field(tr('settings.follow'), box, tr('settings.followHint')),
+    ids() {
+      return inputs.filter((row) => row.inputEl.checked).map((row) => row.member.id);
+    },
+  };
 }
 
 function memberPicker(chore, data) {
@@ -482,41 +516,47 @@ function memberPicker(chore, data) {
   }
   const members = Array.isArray(data.members) ? data.members : [];
   if (!members.length) return { field: hint(tr('chores.membersMissing')), ids: null };
+  const explicit = Array.isArray(chore?.assigneeIds);
+  const assigned = new Set(explicit ? chore.assigneeIds.map(String) : []);
   const excluded = new Set((chore?.excludedMemberIds || []).map(String));
   const box = document.createElement('div');
   box.className = 'kc-members';
+  const everyone = document.createElement('label');
+  everyone.className = 'kc-member kc-everyone';
+  const everyoneInput = document.createElement('input');
+  everyoneInput.type = 'checkbox';
+  const everyoneText = document.createElement('span');
+  everyoneText.textContent = tr('chores.everyone');
+  everyone.append(everyoneInput, everyoneText);
+  box.append(everyone);
   const inputs = members.map((member) => {
     const label = document.createElement('label');
-    label.className = 'kc-member';
+    label.className = 'kc-member kc-assignee';
     const inputEl = document.createElement('input');
     inputEl.type = 'checkbox';
-    inputEl.checked = !excluded.has(member.id);
+    if (!chore) inputEl.checked = false;
+    else if (explicit) inputEl.checked = assigned.has(member.id);
+    else inputEl.checked = !excluded.has(member.id);
     const text = document.createElement('span');
     text.textContent = member.name;
     label.append(inputEl, text);
     box.append(label);
     return { member, inputEl };
   });
+  const syncAll = () => {
+    everyoneInput.checked = inputs.length > 0 && inputs.every((row) => row.inputEl.checked);
+  };
+  everyoneInput.addEventListener('change', () => {
+    for (const row of inputs) row.inputEl.checked = everyoneInput.checked;
+  });
+  for (const row of inputs) row.inputEl.addEventListener('change', syncAll);
+  syncAll();
   return {
-    field: field(tr('chores.field.members'), box, tr('chores.membersHint')),
+    field: field(tr('chores.field.for'), box, tr('chores.forHint')),
     ids() {
-      return inputs.filter((row) => !row.inputEl.checked).map((row) => row.member.id);
+      return inputs.filter((row) => row.inputEl.checked).map((row) => row.member.id);
     },
   };
-}
-
-async function loadMembers(signal) {
-  try {
-    const { api } = await import('/api.js');
-    const res = await api.get('/family/members', { signal });
-    const rows = Array.isArray(res?.data) ? res.data : [];
-    return rows
-      .map((row) => ({ id: String(row?.id ?? ''), name: String(row?.display_name || row?.id || '').trim() }))
-      .filter((row) => row.id && row.name);
-  } catch (err) {
-    if (err?.name === 'AbortError') throw err;
-    return [];
-  }
 }
 
 function input(value, type) {
