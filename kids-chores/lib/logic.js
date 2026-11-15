@@ -7,6 +7,21 @@ export const MAX_CHORES = 48;
 export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7];
 export const DEFAULT_DAYS = [1, 2, 3, 4, 5];
 export const PREFIX = '/api/extensions/kids-chores';
+export const PROGRESS_ICONS = [
+  'sun',
+  'star',
+  'heart',
+  'moon',
+  'flower',
+  'trophy',
+  'rocket',
+  'house',
+  'tree',
+  'smile',
+  'cloud',
+  'crown',
+  'diamond',
+];
 
 const WEEKDAY_SHORT = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
 
@@ -74,6 +89,10 @@ export function msUntilNextDate(now, timeZone) {
   return Math.max(1000, hi - now.getTime() + 1500);
 }
 
+export function isProgressIcon(value) {
+  return PROGRESS_ICONS.includes(value);
+}
+
 function cloneChore(chore) {
   return {
     id: chore.id,
@@ -101,7 +120,7 @@ export function normalizeState(raw) {
     notifyAdmin: settings.notifyAdmin !== false,
     showOnWall: settings.showOnWall === true,
     timezone: isValidTimeZone(settings.timezone) ? settings.timezone : 'Europe/Oslo',
-    progressIcon: settings.progressIcon === 'star' ? 'star' : 'sun',
+    progressIcon: isProgressIcon(settings.progressIcon) ? settings.progressIcon : 'sun',
   };
   if (Array.isArray(raw.chores)) {
     state.chores = raw.chores.slice(0, MAX_CHORES).map((chore, index) => normalizeChore(chore, index)).filter(Boolean);
@@ -392,7 +411,7 @@ function applySettings(state, body) {
     next.timezone = body.timezone;
   }
   if (body.progressIcon !== undefined) {
-    if (body.progressIcon !== 'sun' && body.progressIcon !== 'star') return { error: 'invalid' };
+    if (!isProgressIcon(body.progressIcon)) return { error: 'invalid' };
     next.progressIcon = body.progressIcon;
   }
   if (body.notifyAdmin !== undefined) {

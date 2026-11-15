@@ -124,11 +124,41 @@ export function progressMark(percent, icon, size) {
     { fill: color, 'clip-path': `url(#${id})` },
   ]) {
     const group = svgEl('g', part);
-    if (icon === 'star') group.append(starShape());
-    else group.append(...sunShapes());
+    group.append(...iconShapes(icon));
     svg.append(group);
   }
   return svg;
+}
+
+function iconShapes(icon) {
+  if (icon === 'star') return [starShape()];
+  if (icon === 'heart') return [shape('path', { d: 'M32 54C32 54 10 40 10 26 10 16 17 10 25 13 29 14.6 31 18 32 22 33 18 35 14.6 39 13 47 10 54 16 54 26 54 40 32 54 32 54Z' })];
+  if (icon === 'moon') {
+    return [shape('path', {
+      'fill-rule': 'evenodd',
+      d: 'M42 12A22 22 0 1 0 42 52A18 18 0 0 1 42 12Z',
+    })];
+  }
+  if (icon === 'flower') return flowerShapes();
+  if (icon === 'trophy') return trophyShapes();
+  if (icon === 'rocket') return rocketShapes();
+  if (icon === 'house') {
+    return [shape('path', {
+      'fill-rule': 'evenodd',
+      d: 'M32 6 58 30H50V56H14V30H6ZM26 56V40H38V56Z',
+    })];
+  }
+  if (icon === 'tree') return treeShapes();
+  if (icon === 'smile') {
+    return [shape('path', {
+      'fill-rule': 'evenodd',
+      d: 'M32 6A26 26 0 1 0 32 58 26 26 0 1 0 32 6M21 26A3 3 0 1 0 27 26 3 3 0 1 0 21 26M37 26A3 3 0 1 0 43 26 3 3 0 1 0 37 26M20 36Q32 52 44 36 32 46 20 36Z',
+    })];
+  }
+  if (icon === 'cloud') return cloudShapes();
+  if (icon === 'crown') return crownShapes();
+  if (icon === 'diamond') return [shape('polygon', { points: '32,4 58,32 32,60 6,32' })];
+  return sunShapes();
 }
 
 function sunShapes() {
@@ -153,6 +183,72 @@ function starShape() {
   return svgEl('polygon', {
     points: '32,6 39.2,24.2 59,26.2 44.2,38.8 48.4,58 32,48.2 15.6,58 19.8,38.8 5,26.2 24.8,24.2',
   });
+}
+
+function flowerShapes() {
+  const nodes = [];
+  for (let index = 0; index < 6; index += 1) {
+    nodes.push(shape('ellipse', {
+      cx: '32',
+      cy: '18',
+      rx: '7',
+      ry: '11',
+      transform: `rotate(${index * 60} 32 32)`,
+    }));
+  }
+  nodes.push(shape('circle', { cx: '32', cy: '32', r: '7' }));
+  return nodes;
+}
+
+function trophyShapes() {
+  return [
+    shape('path', { d: 'M18 18C8 18 8 32 18 32V26C12 26 12 22 18 22Z' }),
+    shape('path', { d: 'M46 18C56 18 56 32 46 32V26C52 26 52 22 46 22Z' }),
+    shape('path', { d: 'M18 12H46V26C46 38 40 44 32 46 24 44 18 38 18 26Z' }),
+    shape('rect', { x: '28', y: '45', width: '8', height: '7' }),
+    shape('rect', { x: '20', y: '52', width: '24', height: '6', rx: '2' }),
+  ];
+}
+
+function rocketShapes() {
+  return [
+    shape('path', {
+      'fill-rule': 'evenodd',
+      d: 'M32 6 42 22V46H22V22ZM32 26m-4 0a4 4 0 1 0 8 0 4 4 0 1 0-8 0',
+    }),
+    shape('polygon', { points: '22,30 8,48 22,44' }),
+    shape('polygon', { points: '42,30 56,48 42,44' }),
+  ];
+}
+
+function treeShapes() {
+  return [
+    shape('polygon', { points: '32,6 50,28 14,28' }),
+    shape('polygon', { points: '32,20 56,46 8,46' }),
+    shape('rect', { x: '28', y: '44', width: '8', height: '14', rx: '1' }),
+  ];
+}
+
+function cloudShapes() {
+  return [
+    shape('circle', { cx: '22', cy: '38', r: '12' }),
+    shape('circle', { cx: '34', cy: '30', r: '14' }),
+    shape('circle', { cx: '48', cy: '38', r: '10' }),
+    shape('ellipse', { cx: '34', cy: '44', rx: '22', ry: '8' }),
+  ];
+}
+
+function crownShapes() {
+  return [
+    shape('polygon', { points: '8,48 12,22 24,34 32,12 40,34 52,22 56,48' }),
+    shape('circle', { cx: '12', cy: '20', r: '3.5' }),
+    shape('circle', { cx: '32', cy: '12', r: '3.5' }),
+    shape('circle', { cx: '52', cy: '20', r: '3.5' }),
+  ];
+}
+
+function shape(name, attrs) {
+  return svgEl(name, attrs);
 }
 
 function svgEl(name, attrs = {}) {

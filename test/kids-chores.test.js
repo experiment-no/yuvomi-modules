@@ -10,9 +10,11 @@ import { register } from 'node:module';
 import { createClient, KidsChoresError } from '../kids-chores/lib/client.js';
 import {
   PREFIX,
+  PROGRESS_ICONS,
   buildToday,
   defaultState,
   handle,
+  normalizeState,
   shouldShowOnWall,
   webhookDenied,
   webhookEvent,
@@ -117,15 +119,23 @@ test('goal, percent, and an empty list', () => {
   assert.equal(buildToday(state, FRIDAY).allDone, false);
 });
 
-test('settings keep the previous timezone and only accept sun or star', async () => {
+test('settings keep the previous timezone and accept the progress icons', async () => {
   let state = defaultState();
   const badZone = await ask(state, 'PUT', '/settings', { timezone: 'Mars/Base', pointGoal: 4 });
   assert.equal(badZone.status, 400);
   assert.equal(badZone.body.reason, 'invalid');
   assert.equal(badZone.state.settings.timezone, 'Europe/Oslo');
   assert.equal(badZone.state.settings.pointGoal, 10);
-  const badIcon = await ask(state, 'PUT', '/settings', { progressIcon: 'moon' });
+  const badIcon = await ask(state, 'PUT', '/settings', { progressIcon: 'comet' });
   assert.equal(badIcon.status, 400);
+  assert.equal(badIcon.state.settings.progressIcon, 'sun');
+  for (const icon of PROGRESS_ICONS) {
+    const picked = await ask(state, 'PUT', '/settings', { progressIcon: icon });
+    assert.equal(picked.status, 200);
+    assert.equal(picked.state.settings.progressIcon, icon);
+    state = picked.state;
+  }
+  assert.equal(normalizeState({ settings: { progressIcon: 'comet' } }).settings.progressIcon, 'sun');
   const saved = await ask(state, 'PUT', '/settings', {
     displayTitle: 'Saturday jobs',
     pointGoal: 4,
@@ -586,6 +596,10 @@ test('the overview catalog gets a Kids Chores widget', () => {
     const strings = JSON.parse(fs.readFileSync(new URL(`../kids-chores/locales/${locale}.json`, import.meta.url), 'utf8'));
     assert.equal(strings['widgets.today'], 'Kids Chores');
     if (locale === 'nb') assert.equal(strings['page.congrats'], 'Alt ferdig i dag — Bra jobba!');
+    for (const icon of PROGRESS_ICONS) {
+      assert.equal(typeof strings[`icon.${icon}`], 'string');
+      assert.ok(strings[`icon.${icon}`].length > 1);
+    }
   }
 });
 

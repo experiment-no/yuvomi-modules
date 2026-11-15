@@ -1,5 +1,5 @@
 import { createClient } from './lib/client.js';
-import { WEEKDAYS } from './lib/logic.js';
+import { PROGRESS_ICONS, WEEKDAYS } from './lib/logic.js';
 import {
   STYLE_HREF,
   button,
@@ -7,6 +7,7 @@ import {
   errorBody,
   field,
   listen,
+  progressMark,
   showEmpty,
   showToast,
   toggleField,
@@ -85,15 +86,7 @@ function settingsForm(data, signal, token, container) {
   webhook.autocomplete = 'off';
   const timezone = input(settings.timezone, 'text');
   timezone.autocomplete = 'off';
-  const icon = document.createElement('select');
-  icon.className = 'form-input';
-  for (const value of ['sun', 'star']) {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = tr(`icon.${value}`);
-    option.selected = settings.progressIcon === value;
-    icon.append(option);
-  }
+  const icons = iconPicker(settings.progressIcon);
   const notify = toggleField(tr('settings.notifyAdmin'), settings.notifyAdmin !== false);
   const wall = toggleField(tr('settings.showOnWall'), settings.showOnWall === true);
 
@@ -103,7 +96,7 @@ function settingsForm(data, signal, token, container) {
     field(tr('settings.congrats'), congrats),
     field(tr('settings.webhook'), webhook),
     field(tr('settings.timezone'), timezone, tr('hint.midnight')),
-    field(tr('settings.progressIcon'), icon),
+    iconField(icons),
     notify.wrap,
     wall.wrap,
   );
@@ -140,7 +133,7 @@ function settingsForm(data, signal, token, container) {
         pointGoal,
         congratsMessage: congrats.value,
         timezone: timezone.value.trim(),
-        progressIcon: icon.value,
+        progressIcon: chosenIcon(icons),
         notifyAdmin: notify.input.checked,
         showOnWall: wall.input.checked,
         webhookUrl: webhook.value,
@@ -421,6 +414,40 @@ function badge(text) {
 
 function dayNames(days) {
   return (days || []).map((day) => tr(`days.${day}`)).join(' ');
+}
+
+function iconPicker(selected) {
+  const group = document.createElement('div');
+  group.className = 'kc-icons';
+  group.role = 'radiogroup';
+  const current = PROGRESS_ICONS.includes(selected) ? selected : 'sun';
+  for (const value of PROGRESS_ICONS) {
+    const choice = document.createElement('label');
+    choice.className = 'kc-icon-choice';
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'kc-progress-icon';
+    radio.value = value;
+    radio.checked = value === current;
+    const caption = document.createElement('span');
+    caption.textContent = tr(`icon.${value}`);
+    choice.append(radio, progressMark(100, value, 36), caption);
+    group.append(choice);
+  }
+  return group;
+}
+
+function iconField(icons) {
+  const wrap = field(tr('settings.progressIcon'), icons);
+  const label = wrap.querySelector('.form-label');
+  label.id = 'kc-progress-icon-label';
+  icons.setAttribute('aria-labelledby', label.id);
+  return wrap;
+}
+
+function chosenIcon(group) {
+  const picked = group.querySelector('input:checked');
+  return picked ? picked.value : 'sun';
 }
 
 function input(value, type) {
