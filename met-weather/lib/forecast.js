@@ -6,6 +6,10 @@
 export const PREFIX = '/api/extensions/met-weather';
 export const TIME_ZONE = 'Europe/Oslo';
 export const HOUR_MS = 60 * 60 * 1000;
+/** Ten local days. MET steps past the first two days, and the page still keeps them. */
+export const FORECAST_HOURS = 240;
+export const PERIODS = ['night', 'morning', 'afternoon', 'evening'];
+const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
 
 const COMPASS_NB = ['N', 'NØ', 'Ø', 'SØ', 'S', 'SV', 'V', 'NV'];
 const COMPASS_EN = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
@@ -173,12 +177,22 @@ export function formatNumber(value, digits = 1) {
   return rounded.toFixed(digits);
 }
 
+function finiteOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function precipitation(entry) {
-  const hour = entry?.data?.next_1_hours?.details?.precipitation_amount;
-  if (Number.isFinite(hour)) return { amount: hour, span: 1 };
-  const six = entry?.data?.next_6_hours?.details?.precipitation_amount;
-  if (Number.isFinite(six)) return { amount: six, span: 6 };
-  return { amount: 0, span: 1 };
+  const hour = entry?.data?.next_1_hours?.details;
+  const six = entry?.data?.next_6_hours?.details;
+  const details = hour || six || {};
+  const amount = Number(details.precipitation_amount);
+  const max = Number(details.precipitation_amount_max);
+  return {
+    amount: Number.isFinite(amount) ? amount : 0,
+    span: hour ? 1 : (six ? 6 : 1),
+    max: Number.isFinite(max) ? max : null,
+  };
 }
 
 function parseEntry(entry) {
@@ -196,7 +210,9 @@ function parseEntry(entry) {
     temp: instant.air_temperature,
     precip: precip.amount,
     precipSpan: precip.span,
+    precipMax: precip.max,
     wind: Number.isFinite(instant.wind_speed) ? instant.wind_speed : null,
+    gust: finiteOrNull(instant.wind_speed_of_gust),
     direction: Number.isFinite(instant.wind_from_direction) ? instant.wind_from_direction : null,
     humidity: Number.isFinite(instant.relative_humidity) ? instant.relative_humidity : null,
     symbol,
@@ -279,4 +295,370 @@ export function layoutChart(points, box = {}) {
     };
   });
   return { width, height, pad, tMin, tMax, pMax, base, slot, marks };
+}
+
+function zoneParts(date, timeZone) {
+  const formatted = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(date);
+  const bag = {};
+  for (const part of formatted) bag[part.type] = part.value;
+  let hour = Number(bag.hour);
+  if (hour === 24) hour = 0;
+  return {
+    date: `${bag.year}-${bag.month}-${bag.day}`,
+    hour,
+    minute: Number(bag.minute),
+  };
+}
+
+/** Calendar parts of an instant in Europe/Oslo. */
+export function osloParts(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return zoneParts(date, TIME_ZONE);
+}
+
+/** An Open-Meteo local time (`2026-11-15T18:00`) becomes a UTC instant. */
+export function osloLocalToIso(local) {
+  const text = String(local || '');
+  if (!text) return '';
+  if (/[zZ]$/.test(text) || /[+-]\d\d:\d\d$/.test(text)) {
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : '';
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(text);
+  if (!match) return '';
+  const [year, month, day, hour, minute] = match.slice(1).map(Number);
+  const desired = Date.UTC(year, month - 1, day, hour, minute);
+  let utc = desired;
+  for (let pass = 0; pass < 2; pass += 1) {
+    const got = zoneParts(new Date(utc), TIME_ZONE);
+    const shown = Date.UTC(Number(got.date.slice(0, 4)), Number(got.date.slice(5, 7)) - 1, Number(got.date.slice(8, 10)), got.hour, got.minute);
+    utc += desired - shown;
+  }
+  return new Date(utc).toISOString();
+}
+
+function periodId(hour) {
+  if (hour < 6) return 'night';
+  if (hour < 12) return 'morning';
+  if (hour < 18) return 'afternoon';
+  return 'evening';
+}
+
+function describeDay(day) {
+  const symbol = day?.symbol || '';
+  const periods = {};
+  for (const id of PERIODS) {
+    const known = day?.periods?.[id];
+    periods[id] = known?.symbol ? known : (symbol ? { symbol } : null);
+  }
+  return {
+    date: day?.date || '',
+    low: finiteOrNull(day?.low),
+    high: finiteOrNull(day?.high),
+    precip: finiteOrNull(day?.precip),
+    wind: finiteOrNull(day?.wind),
+    direction: finiteOrNull(day?.direction),
+    gust: finiteOrNull(day?.gust),
+    symbol,
+    periods,
+    hours: Array.isArray(day?.hours) ? day.hours : [],
+  };
+}
+
+/**
+ * One row per Oslo date. Night, morning, afternoon and evening take the first
+ * hour in that span. Precipitation is the sum of the steps, and wind is the
+ * strongest step.
+ */
+export function daysFromHours(hours) {
+  const groups = new Map();
+  for (const point of Array.isArray(hours) ? hours : []) {
+    const parts = osloParts(point?.time);
+    if (!parts || !Number.isFinite(point?.temp)) continue;
+    let group = groups.get(parts.date);
+    if (!group) {
+      group = [];
+      groups.set(parts.date, group);
+    }
+    group.push(point);
+  }
+  return [...groups.entries()].map(([date, points]) => {
+    points.sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
+    const temps = points.map((point) => point.temp).filter(Number.isFinite);
+    const winds = points.filter((point) => Number.isFinite(point.wind));
+    const gusts = points.map((point) => point.gust).filter(Number.isFinite);
+    const windiest = winds.reduce((best, point) => (!best || point.wind > best.wind ? point : best), null);
+    const periods = {};
+    for (const id of PERIODS) {
+      const pick = points.find((point) => periodId(osloParts(point.time).hour) === id);
+      periods[id] = pick ? { symbol: pick.symbol || '', temp: pick.temp } : null;
+    }
+    return {
+      date,
+      low: temps.length ? Math.min(...temps) : null,
+      high: temps.length ? Math.max(...temps) : null,
+      precip: points.reduce((sum, point) => sum + (Number.isFinite(point.precip) ? point.precip : 0), 0),
+      wind: windiest ? windiest.wind : null,
+      direction: windiest && Number.isFinite(windiest.direction) ? windiest.direction : null,
+      gust: gusts.length ? Math.max(...gusts) : null,
+      symbol: periods.afternoon?.symbol || points.find((point) => point.symbol)?.symbol || '',
+      periods,
+      hours: points,
+    };
+  });
+}
+
+/** Days that follow today, four of them, for the overview strip. */
+export function upcomingDays(days, now = new Date(), count = 4) {
+  const today = osloParts(now)?.date;
+  const list = Array.isArray(days) ? days : [];
+  const later = list.filter((day) => day.date > today);
+  return (later.length ? later : list).slice(0, count);
+}
+
+export function todayRecord(days, now = new Date()) {
+  const today = osloParts(now)?.date;
+  return (Array.isArray(days) ? days : []).find((day) => day.date === today) || null;
+}
+
+/** Where each day's high and low sit inside the strip, so the bars can be compared. */
+export function tempSpans(days) {
+  const list = Array.isArray(days) ? days : [];
+  const values = list.flatMap((day) => [day.low, day.high]).filter(Number.isFinite);
+  if (values.length < 2) return list.map(() => null);
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const span = hi - lo;
+  const minShare = 0.18;
+  return list.map((day) => {
+    if (!Number.isFinite(day.low) || !Number.isFinite(day.high)) return null;
+    let from = span > 0 ? (day.low - lo) / span : 0;
+    let to = span > 0 ? (day.high - lo) / span : 1;
+    if (to - from < minShare) {
+      const mid = (from + to) / 2;
+      from = Math.max(0, Math.min(1 - minShare, mid - minShare / 2));
+      to = from + minShare;
+    }
+    return { from, to, cold: day.high < 1 };
+  });
+}
+
+/** Hours drawn on the expanded graph: the step that covers now, then two days. */
+export function graphHours(hours, now = new Date(), span = 48) {
+  const list = (Array.isArray(hours) ? hours : [])
+    .filter((point) => Number.isFinite(Date.parse(point?.time)))
+    .slice()
+    .sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
+  if (!list.length) return [];
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
+  let start = 0;
+  for (let index = 0; index < list.length; index += 1) {
+    if (Date.parse(list[index].time) <= nowMs) start = index;
+    else break;
+  }
+  const begin = Date.parse(list[start].time);
+  const end = begin + span * HOUR_MS;
+  return list.filter((point) => {
+    const stamp = Date.parse(point.time);
+    return stamp >= begin && stamp < end;
+  });
+}
+
+export function weekdayShort(date, lang = 'nb') {
+  const when = new Date(`${date}T12:00:00Z`);
+  if (!Number.isFinite(when.getTime())) return '';
+  const tag = lang === 'nb' ? 'nb-NO' : 'en-GB';
+  const name = new Intl.DateTimeFormat(tag, { timeZone: TIME_ZONE, weekday: 'short' }).format(when).replace(/\.$/, '');
+  return `${name.charAt(0).toLocaleUpperCase(tag)}${name.slice(1)}.`;
+}
+
+/** `Tirsdag 17. nov.` */
+export function dayHeading(date, lang = 'nb') {
+  const when = new Date(`${date}T12:00:00Z`);
+  if (!Number.isFinite(when.getTime())) return String(date || '');
+  const tag = lang === 'nb' ? 'nb-NO' : 'en-GB';
+  const weekday = new Intl.DateTimeFormat(tag, { timeZone: TIME_ZONE, weekday: 'long' }).format(when);
+  const day = new Intl.DateTimeFormat(tag, { timeZone: TIME_ZONE, day: 'numeric' }).format(when).replace(/\.$/, '');
+  const month = new Intl.DateTimeFormat(tag, { timeZone: TIME_ZONE, month: 'short' }).format(when).replace(/\.$/, '');
+  const titled = weekday.charAt(0).toLocaleUpperCase(tag) + weekday.slice(1);
+  return `${titled} ${day}. ${month}.`;
+}
+
+export function clockLabel(value) {
+  const parts = osloParts(value);
+  if (!parts) return '';
+  return `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`;
+}
+
+/**
+ * Attach the day rows when the payload is only an hour list, and give a daily
+ * payload the four period symbols it can honestly show.
+ */
+export function presentForecast(view, now = new Date()) {
+  if (!view?.configured) return view;
+  const hours = Array.isArray(view.hours) ? view.hours : [];
+  if (!hours.length) {
+    return { ...view, days: (Array.isArray(view.days) ? view.days : []).map(describeDay) };
+  }
+  return {
+    ...view,
+    days: daysFromHours(hours),
+    updated: view.updated || new Date(now).toISOString(),
+  };
+}
+
+export function symbolFromCode(code, night) {
+  const base = WMO_SYMBOL[Number(code)] || 'unknown';
+  return night ? `${base}_night` : base;
+}
+
+export function openMeteoUrl(lat, lon) {
+  const params = new URLSearchParams({
+    latitude: String(lat),
+    longitude: String(lon),
+    current: 'temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,is_day',
+    hourly: 'temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m,wind_direction_10m,weather_code,is_day',
+    timezone: TIME_ZONE,
+    forecast_days: '10',
+    models: 'metno_nordic',
+    wind_speed_unit: 'ms',
+  });
+  return `${OPEN_METEO_URL}?${params}`;
+}
+
+/**
+ * Hourly MET Nordic forecast from Open-Meteo. Ten days, every hour, with gusts.
+ * Times in the document are Europe/Oslo wall times.
+ */
+export function forecastFromOpenMeteo(doc, place, now = new Date()) {
+  const empty = { configured: false, place: null, current: null, hours: [], days: [] };
+  const hourly = doc?.hourly;
+  const times = Array.isArray(hourly?.time) ? hourly.time : [];
+  if (!times.length) return empty;
+  const hours = [];
+  for (let index = 0; index < times.length; index += 1) {
+    const temp = Number(hourly.temperature_2m?.[index]);
+    const time = osloLocalToIso(times[index]);
+    if (!Number.isFinite(temp) || !time) continue;
+    const night = Number(hourly.is_day?.[index]) !== 1;
+    hours.push({
+      time,
+      temp,
+      precip: Number.isFinite(Number(hourly.precipitation?.[index])) ? Number(hourly.precipitation[index]) : 0,
+      precipSpan: 1,
+      precipMax: null,
+      wind: finiteOrNull(hourly.wind_speed_10m?.[index]),
+      gust: finiteOrNull(hourly.wind_gusts_10m?.[index]),
+      direction: finiteOrNull(hourly.wind_direction_10m?.[index]),
+      symbol: symbolFromCode(hourly.weather_code?.[index], night),
+    });
+  }
+  if (!hours.length) return empty;
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
+  const currentBlock = doc.current;
+  const currentTemp = Number(currentBlock?.temperature_2m);
+  const current = Number.isFinite(currentTemp)
+    ? {
+      time: osloLocalToIso(currentBlock.time) || hours[0].time,
+      temp: currentTemp,
+      symbol: symbolFromCode(currentBlock.weather_code, Number(currentBlock.is_day) !== 1),
+      wind: finiteOrNull(currentBlock.wind_speed_10m),
+      direction: finiteOrNull(currentBlock.wind_direction_10m),
+      precip: null,
+    }
+    : hours.find((point) => Date.parse(point.time) <= nowMs) || hours[0];
+  return presentForecast({
+    configured: true,
+    source: 'open-meteo',
+    place: {
+      name: place?.name || '',
+      municipality: place?.municipality || '',
+      county: place?.county || '',
+    },
+    current,
+    hours,
+    updated: new Date(now).toISOString(),
+    attribution: {
+      met: 'https://www.met.no/',
+      openMeteo: 'https://open-meteo.com/',
+    },
+  }, now);
+}
+
+/**
+ * Temperature on the upper plot, precipitation from the same base, wind and
+ * gust on the lower plot. Arrow rotation points where the wind is going.
+ */
+export function layoutGraph(points, box = {}) {
+  const list = Array.isArray(points) ? points : [];
+  const width = box.width || 960;
+  const height = box.height || 292;
+  const pad = { l: 40, r: 36, t: 12, b: 8, ...box.pad };
+  const temps = list.map((point) => point.temp).filter(Number.isFinite);
+  let tMin = temps.length ? Math.min(...temps, 0) : 0;
+  let tMax = temps.length ? Math.max(...temps, 0) : 1;
+  if (tMax - tMin < 1) {
+    tMin -= 1;
+    tMax += 1;
+  }
+  const precips = list.flatMap((point) => [point.precip, point.precipMax]).filter(Number.isFinite);
+  const pMax = Math.max(1, ...precips, 0);
+  const winds = list.flatMap((point) => [point.wind, point.gust]).filter(Number.isFinite);
+  const wMax = Math.max(1, ...winds, 0);
+  const gap = 28;
+  const innerW = Math.max(1, width - pad.l - pad.r);
+  const plotH = Math.max(40, Math.round((height - pad.t - pad.b - gap) * 0.62));
+  const topBase = pad.t + plotH;
+  const windTop = topBase + gap;
+  const windBase = height - pad.b;
+  const windH = Math.max(1, windBase - windTop);
+  const slot = list.length > 0 ? innerW / list.length : innerW;
+  const barW = Math.max(1, slot * 0.55);
+  const xAt = (index) => pad.l + slot * index + slot / 2;
+  const yTemp = (temp) => pad.t + (1 - (temp - tMin) / (tMax - tMin)) * plotH;
+  const yPrecip = (amount) => topBase - (Math.max(0, amount) / pMax) * plotH;
+  const yWind = (speed) => windBase - (Math.max(0, speed) / wMax) * windH;
+  const marks = list.map((point, index) => {
+    const precip = Number.isFinite(point.precip) ? point.precip : 0;
+    const max = Number.isFinite(point.precipMax) ? point.precipMax : null;
+    const precipY = yPrecip(precip);
+    const maxY = max == null ? null : yPrecip(max);
+    return {
+      x: xAt(index),
+      tempY: yTemp(point.temp),
+      barX: xAt(index) - barW / 2,
+      barY: precipY,
+      barW,
+      barH: topBase - precipY,
+      maxY,
+      maxH: maxY == null ? 0 : topBase - maxY,
+      windY: Number.isFinite(point.wind) ? yWind(point.wind) : null,
+      gustY: Number.isFinite(point.gust) ? yWind(point.gust) : null,
+      direction: Number.isFinite(point.direction) ? (point.direction + 180) % 360 : null,
+    };
+  });
+  return {
+    width,
+    height,
+    pad,
+    tMin,
+    tMax,
+    pMax,
+    wMax,
+    topBase,
+    windTop,
+    windBase,
+    zeroY: yTemp(0),
+    slot,
+    marks,
+  };
 }

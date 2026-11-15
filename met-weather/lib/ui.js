@@ -4,7 +4,7 @@
 
 import { t } from '/i18n.js';
 
-import { TIME_ZONE, formatNumber, layoutChart } from './forecast.js';
+import { TIME_ZONE, clockLabel, formatNumber, layoutChart, layoutGraph, osloParts, symbolIcon, weekdayShort } from './forecast.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -189,4 +189,179 @@ export function drawChart(points, lang) {
 
 export function stopped(container, signal, token) {
   return signal?.aborted || container._mwToken !== token;
+}
+
+let hatchSerial = 0;
+
+function linePoints(marks, key) {
+  return marks
+    .filter((mark) => Number.isFinite(mark[key]))
+    .map((mark) => `${mark.x},${mark[key]}`)
+    .join(' ');
+}
+
+/**
+ * The expanded graph: weather icons, temperature, precipitation, wind, gust
+ * and the direction the wind is blowing.
+ */
+export function graphFrame(points, lang, options = {}) {
+  const list = Array.isArray(points) ? points : [];
+  const layout = layoutGraph(list);
+  const root = document.createElement('div');
+  root.className = 'mw-graph';
+
+  const days = document.createElement('div');
+  days.className = 'mw-graph__days';
+  const icons = document.createElement('div');
+  icons.className = 'mw-graph__icons';
+  const seen = new Map();
+  list.forEach((point, index) => {
+    const date = osloParts(point.time)?.date;
+    if (!date) return;
+    const bucket = seen.get(date) || [];
+    bucket.push(index);
+    seen.set(date, bucket);
+  });
+  for (const [date, indexes] of seen) {
+    const mid = indexes[Math.floor(indexes.length / 2)];
+    const label = document.createElement('span');
+    label.className = 'mw-graph__day';
+    label.style.left = `${(layout.marks[mid].x / layout.width) * 100}%`;
+    label.textContent = `${weekdayShort(date, lang)} ${date.slice(8).replace(/^0/, '')}. ${monthShort(date, lang)}.`;
+    days.append(label);
+  }
+  const iconStep = list.length > 36 ? 2 : 1;
+  list.forEach((point, index) => {
+    if (index % iconStep !== 0) return;
+    const holder = document.createElement('span');
+    holder.className = 'mw-graph__icon';
+    holder.style.left = `${(layout.marks[index].x / layout.width) * 100}%`;
+    holder.append(icon(symbolIcon(point.symbol)));
+    icons.append(holder);
+  });
+
+  const hatch = `mw-hatch-${hatchSerial += 1}`;
+  const svg = svgEl('svg', {
+    viewBox: `0 0 ${layout.width} ${layout.height}`,
+    class: 'mw-graph__svg',
+    role: 'img',
+    'aria-label': tr('page.twoDays'),
+  });
+  const defs = svgEl('defs', {});
+  const pattern = svgEl('pattern', {
+    id: hatch,
+    width: '6',
+    height: '6',
+    patternUnits: 'userSpaceOnUse',
+    patternTransform: 'rotate(45)',
+  });
+  pattern.append(svgEl('line', { x1: '0', y1: '0', x2: '0', y2: '6', class: 'mw-graph__hatch' }));
+  defs.append(pattern);
+  svg.append(defs);
+
+  const plotRight = layout.width - layout.pad.r;
+  for (const y of [layout.pad.t, layout.zeroY, layout.topBase]) {
+    svg.append(svgEl('line', {
+      x1: layout.pad.l,
+      x2: plotRight,
+      y1: y,
+      y2: y,
+      class: y === layout.zeroY ? 'mw-graph__zero' : 'mw-graph__grid',
+    }));
+  }
+  svg.append(svgEl('line', {
+    x1: layout.pad.l,
+    x2: plotRight,
+    y1: layout.windBase,
+    y2: layout.windBase,
+    class: 'mw-graph__grid',
+  }));
+
+  for (const mark of layout.marks) {
+    if (mark.maxH > 0) {
+      svg.append(svgEl('rect', {
+        x: mark.barX,
+        y: mark.maxY,
+        width: mark.barW,
+        height: mark.maxH,
+        fill: `url(#${hatch})`,
+        class: 'mw-graph__max',
+      }));
+    }
+    if (mark.barH > 0) {
+      svg.append(svgEl('rect', {
+        x: mark.barX,
+        y: mark.barY,
+        width: mark.barW,
+        height: mark.barH,
+        class: 'mw-graph__precip',
+      }));
+    }
+  }
+
+  const tempLine = linePoints(layout.marks, 'tempY');
+  if (tempLine) svg.append(svgEl('polyline', { points: tempLine, class: 'mw-graph__temp' }));
+  const windLine = linePoints(layout.marks, 'windY');
+  if (windLine) svg.append(svgEl('polyline', { points: windLine, class: 'mw-graph__wind' }));
+  const gustLine = linePoints(layout.marks, 'gustY');
+  if (gustLine) svg.append(svgEl('polyline', { points: gustLine, class: 'mw-graph__gust' }));
+
+  const arrowStep = list.length > 24 ? 3 : 1;
+  layout.marks.forEach((mark, index) => {
+    if (mark.direction == null || index % arrowStep !== 0) return;
+    svg.append(svgEl('polygon', {
+      points: '0,-4 3,3.5 -3,3.5',
+      transform: `translate(${mark.x} ${layout.windBase - 8}) rotate(${mark.direction})`,
+      class: 'mw-graph__arrow',
+    }));
+  });
+
+  const left = (text, y) => {
+    const node = svgEl('text', { x: 4, y, class: 'mw-graph__tick' });
+    node.textContent = text;
+    svg.append(node);
+  };
+  const right = (text, y) => {
+    const node = svgEl('text', { x: layout.width - 4, y, 'text-anchor': 'end', class: 'mw-graph__tick' });
+    node.textContent = text;
+    svg.append(node);
+  };
+  left(`${formatNumber(layout.tMax, 0)}°`, layout.pad.t + 10);
+  left(`${formatNumber(layout.tMin, 0)}°`, layout.topBase);
+  right(`${formatNumber(layout.pMax, 0)}`, layout.pad.t + 10);
+  right('0', layout.topBase);
+  left(`${formatNumber(layout.wMax, 0)}`, layout.windTop + 12);
+  left('0', layout.windBase);
+
+  const legend = document.createElement('div');
+  legend.className = 'mw-graph__legend';
+  const items = [
+    ['temp', 'graph.temp'],
+    ['precip', 'graph.precip'],
+  ];
+  if (list.some((point) => Number.isFinite(point.precipMax))) items.push(['max', 'graph.precipMax']);
+  if (list.some((point) => Number.isFinite(point.wind))) items.push(['wind', 'graph.wind']);
+  if (list.some((point) => Number.isFinite(point.gust))) items.push(['gust', 'graph.gust']);
+  for (const [name, label] of items) {
+    const item = document.createElement('span');
+    const swatch = document.createElement('i');
+    swatch.className = `mw-graph__swatch mw-graph__swatch--${name}`;
+    item.append(swatch, document.createTextNode(tr(label)));
+    legend.append(item);
+  }
+
+  root.append(days, icons, svg, legend);
+  if (options.updated) {
+    const note = document.createElement('p');
+    note.className = 'mw-graph__updated';
+    note.textContent = tr('widget.updated', { time: clockLabel(options.updated) });
+    root.append(note);
+  }
+  return root;
+}
+
+function monthShort(date, lang) {
+  const when = new Date(`${date}T12:00:00Z`);
+  const tag = lang === 'nb' ? 'nb-NO' : 'en-GB';
+  return new Intl.DateTimeFormat(tag, { timeZone: TIME_ZONE, month: 'short' }).format(when).replace(/\.$/, '');
 }

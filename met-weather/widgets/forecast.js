@@ -1,23 +1,35 @@
-import { t } from '/i18n.js';
-
 import { weatherApi } from '../browser.js';
-import { symbolIcon, symbolKey, formatNumber, sliceHours, layoutChart } from '../lib/forecast.js';
+import {
+  graphHours,
+  symbolIcon,
+  symbolKey,
+  tempSpans,
+  todayRecord,
+  upcomingDays,
+  weekdayShort,
+} from '../lib/forecast.js';
 import {
   ensureStyle,
   errorBody,
+  graphFrame,
   icon,
   listen,
+  locale,
   paintIcons,
   showEmpty,
   tr,
 } from '../lib/ui.js';
 
 const ACCENT = '#0369A1';
-const NS = 'http://www.w3.org/2000/svg';
 
-function hostLabel(name, fallback) {
-  const value = t(name);
-  return value === name ? fallback : value;
+function degrees(value) {
+  if (!Number.isFinite(value)) return '';
+  return `${Math.round(value)}°`;
+}
+
+function condition(symbol) {
+  const text = tr(`symbol.${symbolKey(symbol)}`);
+  return text.startsWith('extensions.') ? symbolKey(symbol) : text;
 }
 
 export async function renderWidget(container, context = {}) {
@@ -40,78 +52,29 @@ export async function renderWidget(container, context = {}) {
     return;
   }
   if (signal?.aborted || container._mwToken !== token) return;
-  draw(container, data, signal);
+  showWidget(container, data, {
+    signal,
+    reload: () => { void renderWidget(container, context); },
+  });
 }
 
-function draw(container, data, signal) {
+export function showWidget(container, data, options = {}) {
+  const signal = options.signal;
   container.style.setProperty('--seal-accent', ACCENT);
   container.style.setProperty('--widget-accent', ACCENT);
-  const body = document.createElement('a');
-  body.className = 'widget__body mw-widget';
-  body.href = '/m/met-weather';
-  body.dataset.route = '/m/met-weather';
-  listen(body, 'click', (event) => {
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
-    if (typeof window.yuvomi?.navigate === 'function') {
-      event.preventDefault();
-      window.yuvomi.navigate('/m/met-weather');
-    }
-  }, signal);
-
-  if (!data?.configured || !data.current) {
-    const empty = document.createElement('p');
-    empty.className = 'mw-widget__meta';
-    empty.textContent = tr('page.placeMissing');
-    body.append(empty);
-  } else {
-    const row = document.createElement('div');
-    row.className = 'mw-widget__row';
-    const symbol = document.createElement('div');
-    symbol.className = 'mw-widget__symbol';
-    symbol.append(icon(symbolIcon(data.current.symbol)));
-    const text = document.createElement('div');
-    const temp = document.createElement('p');
-    temp.className = 'mw-widget__temp';
-    temp.textContent = `${formatNumber(data.current.temp, 1)}°`;
-    const meta = document.createElement('p');
-    meta.className = 'mw-widget__meta';
-    const condition = tr(`symbol.${symbolKey(data.current.symbol)}`);
-    const today = data.days?.[0];
-    const span = today && Number.isFinite(today.low) && Number.isFinite(today.high)
-      ? tr('page.highLow', { low: formatNumber(today.low, 1), high: formatNumber(today.high, 1) })
-      : '';
-    meta.textContent = [
-      data.place?.name,
-      condition.startsWith('extensions.') ? '' : condition,
-      span,
-    ].filter(Boolean).join(' · ');
-    text.append(temp, meta);
-    row.append(symbol, text);
-    body.append(row);
-    if (data.hours?.length) body.append(spark(sliceHours(data.hours, 1)));
-  }
-
-  container.replaceChildren(header(data, signal), body);
+  const open = Boolean(container._mwOpen) && Boolean(data?.hours?.length);
+  container.replaceChildren(header(signal, options.reload), body(container, data, signal, open));
+  fitTile(container, open);
   paintIcons(container);
 }
 
-function spark(points) {
-  const layout = layoutChart(points, { width: 320, height: 64, pad: { l: 4, r: 4, t: 6, b: 6 } });
-  const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', `0 0 ${layout.width} ${layout.height}`);
-  svg.setAttribute('class', 'mw-spark');
-  svg.setAttribute('aria-hidden', 'true');
-  if (layout.marks.length) {
-    const line = document.createElementNS(NS, 'polyline');
-    line.setAttribute('points', layout.marks.map((mark) => `${mark.x},${mark.tempY}`).join(' '));
-    line.setAttribute('class', 'mw-chart__temp');
-    svg.append(line);
-  }
-  return svg;
+function fitTile(container, expanded) {
+  const wrapper = container.closest?.('.widget-wrapper');
+  if (!wrapper) return;
+  wrapper.style.setProperty('--tile-rows', expanded ? '172' : '78');
 }
 
-function header(data, signal) {
-  const titleText = data?.place?.name || tr('widgets.forecast');
+function header(signal, reload) {
   const bar = document.createElement('div');
   bar.className = 'widget__header';
   const title = document.createElement('h3');
@@ -122,20 +85,145 @@ function header(data, signal) {
   seal.append(icon('cloud-sun'));
   const text = document.createElement('span');
   text.className = 'widget__title-text';
-  text.textContent = titleText;
+  text.textContent = tr('widgets.forecast');
   title.append(seal, text);
-  const link = document.createElement('a');
-  link.className = 'widget__link';
-  link.href = '/m/met-weather';
-  link.dataset.route = '/m/met-weather';
-  link.textContent = hostLabel('dashboard.allLink', tr('widget.open'));
-  listen(link, 'click', (event) => {
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
-    if (typeof window.yuvomi?.navigate === 'function') {
-      event.preventDefault();
-      window.yuvomi.navigate('/m/met-weather');
-    }
+  const refresh = document.createElement('button');
+  refresh.type = 'button';
+  refresh.className = 'mw-refresh';
+  refresh.setAttribute('aria-label', tr('widget.refresh'));
+  refresh.title = tr('widget.refresh');
+  refresh.append(icon('refresh-cw'));
+  listen(refresh, 'click', (event) => {
+    event.stopPropagation();
+    if (typeof reload === 'function') reload();
   }, signal);
-  bar.append(title, link);
+  bar.append(title, refresh);
   return bar;
+}
+
+function body(container, data, signal, open) {
+  const wrap = document.createElement('div');
+  wrap.className = 'widget__body mw-widget';
+  if (!data?.configured || !data.current) {
+    const empty = document.createElement('p');
+    empty.className = 'mw-now__place';
+    empty.textContent = tr('page.placeMissing');
+    wrap.append(empty);
+    return wrap;
+  }
+  const hours = Array.isArray(data.hours) ? data.hours : [];
+  const face = document.createElement(hours.length ? 'button' : 'div');
+  face.className = 'mw-face';
+  if (hours.length) {
+    face.type = 'button';
+    face.setAttribute('aria-expanded', open ? 'true' : 'false');
+    face.setAttribute('aria-controls', 'mw-widget-graph');
+  }
+  face.append(strip(data, locale()));
+  wrap.append(face);
+  if (hours.length) {
+    const graph = graphFrame(graphHours(hours), locale(), { updated: data.updated });
+    graph.id = 'mw-widget-graph';
+    graph.hidden = !open;
+    listen(face, 'click', () => {
+      const next = face.getAttribute('aria-expanded') !== 'true';
+      face.setAttribute('aria-expanded', next ? 'true' : 'false');
+      graph.hidden = !next;
+      container._mwOpen = next;
+      fitTile(container, next);
+      paintIcons(graph);
+    }, signal);
+    wrap.append(graph);
+  }
+  return wrap;
+}
+
+function strip(data, lang) {
+  const today = todayRecord(data.days);
+  const columns = upcomingDays(data.days);
+  const spans = tempSpans(columns);
+  const row = document.createElement('div');
+  row.className = 'mw-strip';
+  row.append(nowBlock(data, today), rule(), columnsBlock(columns, spans, lang));
+  return row;
+}
+
+function nowBlock(data, today) {
+  const block = document.createElement('div');
+  block.className = 'mw-now';
+  const temp = document.createElement('p');
+  temp.className = 'mw-now__temp';
+  temp.textContent = `${Math.round(data.current.temp)}°C`;
+  const range = document.createElement('div');
+  range.className = 'mw-now__range';
+  if (Number.isFinite(today?.high)) {
+    const high = document.createElement('span');
+    high.className = 'mw-now__high';
+    high.textContent = degrees(today.high);
+    range.append(high);
+  }
+  if (Number.isFinite(today?.low)) {
+    const low = document.createElement('span');
+    low.className = 'mw-now__low';
+    low.textContent = degrees(today.low);
+    range.append(low);
+  }
+  const text = document.createElement('div');
+  text.className = 'mw-now__text';
+  const desc = document.createElement('p');
+  desc.className = 'mw-now__desc';
+  desc.textContent = condition(data.current.symbol);
+  const place = document.createElement('p');
+  place.className = 'mw-now__place';
+  place.textContent = data.place?.name || '';
+  text.append(desc, place);
+  const glyph = document.createElement('div');
+  glyph.className = 'mw-now__icon';
+  glyph.append(icon(symbolIcon(data.current.symbol)));
+  block.append(temp, range, text, glyph);
+  return block;
+}
+
+function rule() {
+  const line = document.createElement('div');
+  line.className = 'mw-rule';
+  line.setAttribute('aria-hidden', 'true');
+  return line;
+}
+
+function columnsBlock(columns, spans, lang) {
+  const forecast = document.createElement('div');
+  forecast.className = 'mw-days';
+  columns.forEach((day, index) => {
+    const col = document.createElement('div');
+    col.className = 'mw-daycol';
+    const label = document.createElement('div');
+    label.className = 'mw-daycol__label';
+    label.textContent = weekdayShort(day.date, lang);
+    const symbol = document.createElement('div');
+    symbol.className = 'mw-daycol__icon';
+    symbol.append(icon(symbolIcon(day.symbol)));
+    const temps = document.createElement('div');
+    temps.className = 'mw-daycol__temps';
+    const high = document.createElement('span');
+    high.textContent = degrees(day.high);
+    const low = document.createElement('span');
+    low.className = 'mw-daycol__low';
+    low.textContent = degrees(day.low);
+    temps.append(high, low);
+    col.append(label, symbol, temps);
+    const span = spans[index];
+    if (span) {
+      const bar = document.createElement('div');
+      bar.className = `mw-span${span.cold ? ' mw-span--cold' : ''}`;
+      bar.setAttribute('aria-hidden', 'true');
+      const fill = document.createElement('i');
+      fill.style.setProperty('--from', span.from.toFixed(4));
+      fill.style.setProperty('--to', span.to.toFixed(4));
+      bar.append(fill);
+      col.append(bar);
+    }
+    forecast.append(col);
+  });
+  return forecast;
 }

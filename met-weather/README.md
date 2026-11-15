@@ -1,6 +1,6 @@
 # Weather
 
-Weather data from the Norwegian Meteorological Institute, on a page for Yuvomi. The overview tile opens a view that switches between one day and two days.
+Weather data from the Norwegian Meteorological Institute, on a page for Yuvomi. The overview tile shows the weather at once: the temperature now, and the next four days. A click on the tile opens the graph in the tile. It does not leave the overview.
 
 Install the folder as a custom module. Yuvomi does not run anything in this folder, and the page cannot call MET itself. Opening the page still works: it reads the forecast Yuvomi already fetches for the household. Pick a place in Norway under Settings, and that place is saved as the household weather location.
 
@@ -16,7 +16,7 @@ Until a place in Norway is saved, the page says so. It does not ask for a separa
 
 ## Service
 
-An optional Node process fetches MET Locationforecast and draws the hours. It does not read or write `yuvomi.db`. Yuvomi will not start it. Without it, the page uses Yuvomi's weather API instead of the hour graph.
+An optional Node process fetches MET Locationforecast and keeps ten days, including gusts and the maximum precipitation when MET sends them. It does not read or write `yuvomi.db`. Yuvomi will not start it. Without it, the page asks Open-Meteo for the MET Nordic hours (ten days, every hour). If that request cannot leave the page, it uses the daily forecast Yuvomi already fetches.
 
 ```sh
 YUVOMI_INTERNAL_URL=http://127.0.0.1:3000 node service/server.js
@@ -44,4 +44,4 @@ location /api/extensions/met-weather/ {
 }
 ```
 
-The overview lists this tile as Weather, or Vær when the language is Norwegian. It is on by default. The tile file is `widgets/forecast.js` (`renderWidget`). A click opens `/m/met-weather`, where the graph and the hour table follow the same 24 or 48 hours.
+The overview lists this tile as Weather, or Vær when the language is Norwegian. It is on by default, four columns wide. The tile file is `widgets/forecast.js` (`renderWidget`). The weather is visible before a click. A click expands the graph for the next two days: temperature, precipitation, wind, gust and the direction the wind is blowing. The page at `/m/met-weather` lists each day on its own row (eight or more when the forecast has them): night, morning, afternoon and evening, high and low, precipitation and wind. A row opens every hour of that day.

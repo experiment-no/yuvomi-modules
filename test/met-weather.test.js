@@ -9,16 +9,25 @@ import { createClient, WeatherError } from '../met-weather/lib/client.js';
 import {
   PREFIX,
   compass,
+  dayHeading,
+  daysFromHours,
   extent,
   forecastFromHost,
   forecastFromMet,
+  forecastFromOpenMeteo,
+  graphHours,
   inNorway,
   layoutChart,
+  layoutGraph,
+  osloLocalToIso,
+  presentForecast,
   roundCoord,
   sliceHours,
   symbolFromWmo,
   symbolIcon,
   symbolKey,
+  upcomingDays,
+  weekdayShort,
 } from '../met-weather/lib/forecast.js';
 import { USER_AGENT, createMetClient, forecastUrl } from '../met-weather/lib/met.js';
 import { placeFromLookup, placeFromPreferences, placesFromGeocode, placesFromSearch } from '../met-weather/lib/places.js';
@@ -124,6 +133,104 @@ test('the chart gives every hour a temperature point and a precipitation bar', (
   assert.ok(layout.marks[0].tempY < layout.marks.at(-1).tempY);
   assert.ok(layout.marks[0].barH > layout.marks[1].barH);
   assert.ok(layout.marks[0].x < layout.marks[1].x);
+});
+
+test('eight days keep night, morning, afternoon and evening', () => {
+  const hours = [];
+  for (let day = 0; day < 8; day += 1) {
+    for (const hour of [2, 8, 14, 20]) {
+      const stamp = new Date(Date.UTC(2026, 10, 15 + day, hour - 1, 0));
+      hours.push({
+        time: stamp.toISOString(),
+        temp: hour === 14 ? 4 : hour === 2 ? -1 : 1,
+        precip: hour === 14 ? 1.25 : 0,
+        precipMax: hour === 14 ? 2 : 0,
+        wind: hour === 20 ? 6.4 : 3,
+        gust: 9,
+        direction: hour === 20 ? 0 : 90,
+        symbol: hour < 6 ? 'clearsky_night' : hour < 12 ? 'cloudy' : hour < 18 ? 'clearsky_day' : 'fair_night',
+      });
+    }
+  }
+  const days = daysFromHours(hours);
+  assert.equal(days.length, 8);
+  assert.equal(days[0].date, '2026-11-15');
+  assert.equal(days[7].date, '2026-11-22');
+  assert.equal(days[0].periods.night.symbol, 'clearsky_night');
+  assert.equal(days[0].periods.morning.symbol, 'cloudy');
+  assert.equal(days[0].periods.afternoon.symbol, 'clearsky_day');
+  assert.equal(days[0].periods.evening.symbol, 'fair_night');
+  assert.equal(days[0].low, -1);
+  assert.equal(days[0].high, 4);
+  assert.equal(days[0].precip, 1.25);
+  assert.equal(days[0].wind, 6.4);
+  assert.equal(days[0].direction, 0);
+  assert.equal(days[2].hours.length, 4);
+  const next = upcomingDays(days, NOW);
+  assert.deepEqual(next.map((day) => day.date), ['2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19']);
+  assert.equal(weekdayShort('2026-11-16', 'nb'), 'Man.');
+  assert.equal(dayHeading('2026-11-17', 'nb'), 'Tirsdag 17. nov.');
+  assert.equal(osloLocalToIso('2026-11-15T00:00'), '2026-11-14T23:00:00.000Z');
+
+  const graph = graphHours(hours, NOW);
+  assert.equal(graph[0].time, '2026-11-15T07:00:00.000Z');
+  assert.equal(graph.length, 8);
+  const warm = layoutGraph([
+    { time: graph[0].time, temp: 4, precip: 2, precipMax: 3, wind: 3, gust: 6, direction: 0 },
+    { time: graph[1].time, temp: -1, precip: 0, wind: 1, gust: 2, direction: 90 },
+  ]);
+  assert.ok(warm.marks[0].tempY < warm.marks[1].tempY);
+  assert.ok(warm.marks[0].barH > warm.marks[1].barH);
+  assert.ok(warm.marks[0].maxH > warm.marks[0].barH);
+  assert.equal(warm.marks[0].direction, 180);
+  assert.ok(warm.marks[0].gustY < warm.marks[0].windY);
+
+  const dense = [];
+  for (let hour = 0; hour < 24; hour += 1) {
+    dense.push({
+      time: new Date(Date.UTC(2026, 10, 16, hour - 1, 0)).toISOString(),
+      temp: hour,
+      precip: 0,
+      wind: 2,
+      symbol: 'cloudy',
+    });
+  }
+  assert.equal(daysFromHours(dense)[0].hours.length, 24);
+});
+
+test('Open-Meteo hours become the same day rows', () => {
+  const view = forecastFromOpenMeteo({
+    current: {
+      time: '2026-11-15T13:00',
+      temperature_2m: 7,
+      weather_code: 3,
+      wind_speed_10m: 3.2,
+      wind_direction_10m: 180,
+      is_day: 0,
+    },
+    hourly: {
+      time: ['2026-11-15T13:00', '2026-11-15T14:00'],
+      temperature_2m: [7, 6.2],
+      precipitation: [0, 0.4],
+      wind_speed_10m: [3.2, 4],
+      wind_gusts_10m: [6, 8],
+      wind_direction_10m: [180, 200],
+      weather_code: [3, 1],
+      is_day: [0, 0],
+    },
+  }, { name: 'Langhus' }, NOW);
+  assert.equal(view.source, 'open-meteo');
+  assert.equal(view.place.name, 'Langhus');
+  assert.equal(view.current.temp, 7);
+  assert.equal(view.current.symbol, 'cloudy_night');
+  assert.equal(view.hours.length, 2);
+  assert.equal(view.hours[1].gust, 8);
+  assert.equal(view.hours[0].time, '2026-11-15T12:00:00.000Z');
+  assert.equal(view.days.length, 1);
+  const daily = presentForecast(forecastFromHost(hostWeather()));
+  assert.equal(daily.days[0].periods.night.symbol, 'cloudy');
+  assert.equal(daily.days[0].periods.evening.symbol, 'cloudy');
+  assert.equal(daily.days[0].hours.length, 0);
 });
 
 test('place search keeps Kartverket hits inside Norway and shortens the county', () => {
@@ -320,7 +427,7 @@ test('the sidecar checks the session, saves a Norwegian place, and serves the fo
     assert.equal(member.body.configured, true);
     assert.equal(member.body.place.lat, 69.6546);
     assert.equal(member.body.place.lon, 18.9637);
-    assert.equal(member.body.hours.length, 48);
+    assert.equal(member.body.hours.length, 50);
     assert.equal(sliceHours(member.body.hours, 1).length, 24);
     assert.equal(metCalls[0].lat, 69.6546);
     assert.equal(member.body.attribution.met, 'https://www.met.no/');
@@ -478,6 +585,63 @@ test('a missing sidecar reads Yuvomi weather instead of failing', async () => {
   );
 });
 
+test('a missing sidecar prefers the hourly forecast over the daily summary', async () => {
+  const calls = [];
+  const client = createClient({
+    hostApi: {
+      async get(path) {
+        calls.push(path);
+        if (path === '/preferences') {
+          return { data: { weather_lat: '59.748', weather_lon: '10.845', weather_city: 'Langhus' } };
+        }
+        if (path === '/weather') return hostWeather();
+        throw new Error(path);
+      },
+    },
+    fetchImpl: async (url) => {
+      const target = String(url);
+      if (target.includes('/api/extensions/met-weather')) return { status: 404, ok: false, text: async () => '' };
+      if (target.includes('api.open-meteo.com')) {
+        return {
+          status: 200,
+          ok: true,
+          text: async () => JSON.stringify({
+            current: {
+              time: '2026-11-15T13:00',
+              temperature_2m: 7,
+              weather_code: 3,
+              wind_speed_10m: 3,
+              wind_direction_10m: 180,
+              is_day: 0,
+            },
+            hourly: {
+              time: Array.from({ length: 24 * 8 }, (_, index) => {
+                const day = Math.floor(index / 24);
+                const hour = index % 24;
+                return `2026-11-${String(15 + day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:00`;
+              }),
+              temperature_2m: Array.from({ length: 24 * 8 }, () => 4),
+              precipitation: Array.from({ length: 24 * 8 }, () => 0),
+              wind_speed_10m: Array.from({ length: 24 * 8 }, () => 3),
+              wind_gusts_10m: Array.from({ length: 24 * 8 }, () => 5),
+              wind_direction_10m: Array.from({ length: 24 * 8 }, () => 180),
+              weather_code: Array.from({ length: 24 * 8 }, () => 1),
+              is_day: Array.from({ length: 24 * 8 }, (_, index) => (index % 24 > 6 && index % 24 < 18 ? 1 : 0)),
+            },
+          }),
+        };
+      }
+      throw new Error(target);
+    },
+  });
+  const forecast = await client.forecast();
+  assert.equal(forecast.source, 'open-meteo');
+  assert.equal(forecast.place.name, 'Langhus');
+  assert.ok(forecast.days.length >= 8);
+  assert.equal(forecast.days[1].hours.length, 24);
+  assert.deepEqual(calls, ['/preferences']);
+});
+
 test('the sidecar answer is used when the service is there', async () => {
   let hostCalled = false;
   const client = createClient({
@@ -509,12 +673,16 @@ test('the sidecar answer is used when the service is there', async () => {
 test('the manifest and both languages describe the same weather module', () => {
   const manifest = JSON.parse(fs.readFileSync(new URL('../met-weather/module.json', import.meta.url), 'utf8'));
   assert.equal(manifest.id, 'met-weather');
-  assert.equal(manifest.version, '1.1.0');
+  assert.equal(manifest.version, '1.2.0');
   assert.equal(manifest.description, 'Værdata fra Norsk meteorologisk institutt');
   assert.equal(manifest.settings.labelKey, 'settings.title');
   assert.equal(manifest.capabilities.api.prefix, '/api/extensions/met-weather');
   assert.equal(manifest.capabilities.widgets[0].entry, 'widgets/forecast.js');
   assert.equal(manifest.capabilities.widgets[0].defaultVisible, true);
+  assert.equal(manifest.capabilities.widgets[0].defaultSize, '4x2');
+  const widget = fs.readFileSync(new URL('../met-weather/widgets/forecast.js', import.meta.url), 'utf8');
+  assert.equal(widget.includes('yuvomi.navigate'), false);
+  assert.equal(widget.includes('/m/met-weather'), false);
   const english = JSON.parse(fs.readFileSync(new URL('../met-weather/locales/en.json', import.meta.url), 'utf8'));
   const norwegian = JSON.parse(fs.readFileSync(new URL('../met-weather/locales/nb.json', import.meta.url), 'utf8'));
   assert.deepEqual(Object.keys(english).sort(), Object.keys(norwegian).sort());

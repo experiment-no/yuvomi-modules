@@ -1,11 +1,11 @@
 /**
  * Talks to /api/extensions/met-weather when that service is running.
- * Yuvomi does not start it, and the page is not allowed to call MET itself.
- * A missing service is not an error: the same screen then reads
- * /api/v1/weather, which Yuvomi already fetches.
+ * Yuvomi does not start it. A missing service is not an error: the page then
+ * asks Open-Meteo for the MET Nordic hours. If that request cannot leave the
+ * page, the same screen reads /api/v1/weather, which Yuvomi already fetches.
  */
 
-import { PREFIX, forecastFromHost } from './forecast.js';
+import { PREFIX, forecastFromHost, forecastFromOpenMeteo, openMeteoUrl, presentForecast } from './forecast.js';
 import { placeFromPreferences, placeRecord, placesFromGeocode } from './places.js';
 
 const CSRF_HEADER = 'X-Met-Weather-CSRF';
@@ -109,9 +109,12 @@ export function createClient(options = {}) {
     }
   }
 
-  async function hostForecast(signal) {
-    const settings = await hostGet('/preferences', signal);
-    const place = placeFromPreferences(settings?.data);
+  async function hostForecast(signal, knownPlace) {
+    let place = knownPlace;
+    if (!place) {
+      const settings = await hostGet('/preferences', signal);
+      place = placeFromPreferences(settings?.data);
+    }
     if (!place) return { configured: false, place: null, current: null, hours: [], days: [] };
     const weather = await hostGet('/weather', signal);
     if (weather?.reason === 'upstream_error' || weather?.reason === 'not_configured') {
@@ -119,10 +122,42 @@ export function createClient(options = {}) {
     }
     const view = forecastFromHost(weather);
     if (view.error || !view.configured) throw new WeatherError(view.error || 'upstream', 502);
-    return {
+    return presentForecast({
       ...view,
       place: { ...place, name: place.name || view.place.name },
-    };
+    });
+  }
+
+  async function readMeteo(url, place, signal) {
+    let response;
+    try {
+      response = await fetchImpl(url, {
+        headers: { accept: 'application/json' },
+        credentials: 'omit',
+        signal,
+      });
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      return null;
+    }
+    if (!response?.ok) return null;
+    let text = '';
+    try {
+      text = await response.text();
+    } catch {
+      return null;
+    }
+    const view = forecastFromOpenMeteo(parseJson(text), place);
+    return view?.configured ? view : null;
+  }
+
+  async function richForecast(place, signal) {
+    const url = openMeteoUrl(place.lat, place.lon);
+    const first = await readMeteo(url, place, signal);
+    if (first) return first;
+    const plain = new URL(url);
+    plain.searchParams.delete('models');
+    return readMeteo(String(plain), place, signal);
   }
 
   async function hostPlaces(query, signal) {
@@ -163,8 +198,13 @@ export function createClient(options = {}) {
   return {
     async forecast(signal) {
       const live = await remote('GET', '/forecast', undefined, signal, false);
-      if (live) return live;
-      return hostForecast(signal);
+      if (live) return presentForecast(live);
+      const settings = await hostGet('/preferences', signal);
+      const place = placeFromPreferences(settings?.data);
+      if (!place) return { configured: false, place: null, current: null, hours: [], days: [] };
+      const rich = await richForecast(place, signal);
+      if (rich) return rich;
+      return hostForecast(signal, place);
     },
     async places(query, signal) {
       const live = await remote('GET', `/places?q=${encodeURIComponent(query)}`, undefined, signal, false);

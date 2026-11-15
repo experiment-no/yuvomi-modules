@@ -155,55 +155,461 @@
 }
 
 .mw-widget {
+  container: mw / inline-size;
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
-  height: 100%;
-  min-height: 0;
-  text-decoration: none;
+  gap: 0.75rem;
+  min-width: 0;
   color: inherit;
 }
 
-.mw-widget:hover .mw-temp,
-.mw-widget:focus-visible .mw-temp {
-  color: var(--widget-accent, #0369A1);
-}
-
-.mw-widget__row {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-}
-
-.mw-widget__symbol {
+.mw-refresh {
   display: grid;
   place-items: center;
-  width: 2.4rem;
-  height: 2.4rem;
-}
-
-.mw-widget__symbol i,
-.mw-widget__symbol svg {
   width: 2rem;
   height: 2rem;
+  margin-right: -0.25rem;
+  border: 1px solid var(--color-border, rgba(127, 127, 127, 0.45));
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 
-.mw-widget__temp {
+.mw-refresh i,
+.mw-refresh svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.mw-face {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+div.mw-face {
+  cursor: default;
+}
+
+.mw-face:focus-visible {
+  outline: 2px solid var(--widget-accent, #0369A1);
+  outline-offset: 2px;
+}
+
+.mw-strip {
+  display: grid;
+  grid-template-columns: minmax(11rem, 1.15fr) 1px minmax(0, 1.6fr);
+  gap: 0.85rem;
+  align-items: center;
+}
+
+.mw-now {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    "temp range icon"
+    "text text icon";
+  gap: 0.1rem 0.75rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.mw-now__temp {
+  grid-area: temp;
   margin: 0;
-  font-size: 1.7rem;
+  font-size: 2.35rem;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
+  line-height: 0.95;
 }
 
-.mw-widget__meta {
-  margin: 0;
+.mw-now__range {
+  grid-area: range;
+  display: flex;
+  flex-direction: column;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.mw-now__high {
+  font-weight: 650;
+}
+
+.mw-now__low,
+.mw-now__desc,
+.mw-now__place {
   color: var(--color-text-secondary, inherit);
 }
 
-.mw-spark {
+.mw-now__text {
+  grid-area: text;
+  min-width: 0;
+}
+
+.mw-now__desc,
+.mw-now__place {
+  margin: 0;
+}
+
+.mw-now__icon {
+  grid-area: icon;
+  display: grid;
+  place-items: center;
+  justify-self: end;
+}
+
+.mw-now__icon i,
+.mw-now__icon svg {
+  width: 4.2rem;
+  height: 4.2rem;
+}
+
+.mw-rule {
+  width: 1px;
+  align-self: stretch;
+  background: var(--color-border, rgba(127, 127, 127, 0.35));
+}
+
+.mw-days {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.mw-daycol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.mw-daycol__label,
+.mw-daycol__low {
+  color: var(--color-text-secondary, inherit);
+  font-size: 0.85rem;
+}
+
+.mw-daycol__icon i,
+.mw-daycol__icon svg {
+  width: 1.7rem;
+  height: 1.7rem;
+}
+
+.mw-daycol__temps {
+  display: flex;
+  gap: 0.35rem;
+  font-weight: 650;
+}
+
+.mw-span {
+  position: relative;
+  width: 100%;
+  height: 0.28rem;
+  margin-top: 0.15rem;
+}
+
+.mw-span i {
+  position: absolute;
+  left: calc(var(--from) * 100%);
+  width: calc((var(--to) - var(--from)) * 100%);
+  height: 100%;
+  border-radius: 999px;
+  background: #3b82f6;
+}
+
+.mw-span--cold i {
+  background: #22d3ee;
+}
+
+.mw-graph {
+  padding: 0.6rem 0.4rem 0.45rem;
+  border-radius: 0.9rem;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.mw-graph__days,
+.mw-graph__icons {
+  position: relative;
+  height: 1.15rem;
+}
+
+.mw-graph__icons {
+  height: 1.35rem;
+}
+
+.mw-graph__day,
+.mw-graph__icon {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.mw-graph__day {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.mw-graph__icon i,
+.mw-graph__icon svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.mw-graph__svg {
   display: block;
   width: 100%;
-  height: 3rem;
+  height: auto;
+}
+
+.mw-graph__grid {
+  stroke: #e2e8f0;
+  stroke-width: 1;
+}
+
+.mw-graph__zero {
+  stroke: #cbd5e1;
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.mw-graph__temp {
+  fill: none;
+  stroke: #dc2626;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.mw-graph__precip {
+  fill: #3b82f6;
+}
+
+.mw-graph__max {
+  stroke: #93c5fd;
+  stroke-width: 0.6;
+}
+
+.mw-graph__hatch {
+  stroke: #60a5fa;
+  stroke-width: 2;
+}
+
+.mw-graph__wind {
+  fill: none;
+  stroke: #7c3aed;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.mw-graph__gust {
+  fill: none;
+  stroke: #7c3aed;
+  stroke-width: 1.6;
+  stroke-dasharray: 5 4;
+  stroke-linejoin: round;
+}
+
+.mw-graph__arrow {
+  fill: #64748b;
+}
+
+.mw-graph__tick {
+  fill: #64748b;
+  font-size: 11px;
+}
+
+.mw-graph__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem 1rem;
+  margin-top: 0.35rem;
+  color: #475569;
+  font-size: 0.78rem;
+}
+
+.mw-graph__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.mw-graph__swatch {
+  width: 0.8rem;
+  height: 0.28rem;
+  border-radius: 999px;
+  background: #dc2626;
+}
+
+.mw-graph__swatch--precip {
+  background: #3b82f6;
+}
+
+.mw-graph__swatch--max {
+  background: repeating-linear-gradient(135deg, #93c5fd, #93c5fd 2px, transparent 2px, transparent 4px);
+}
+
+.mw-graph__swatch--wind,
+.mw-graph__swatch--gust {
+  background: #7c3aed;
+}
+
+.mw-graph__updated {
+  margin: 0.35rem 0 0;
+  color: #64748b;
+  font-size: 0.78rem;
+}
+
+.mw-forecast__head,
+.mw-forecast__row {
+  display: grid;
+  grid-template-columns: minmax(9.5rem, 1.35fr) minmax(13rem, 1.4fr) 6.6rem 5.5rem 4.4rem;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.mw-forecast__head {
+  margin: 0 0.85rem 0.35rem;
+  color: var(--color-text-secondary, inherit);
+  font-size: 0.78rem;
+}
+
+.mw-forecast__measure {
+  text-align: end;
+}
+
+.mw-forecasts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.mw-forecast__row {
+  width: 100%;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--color-border, rgba(127, 127, 127, 0.28));
+  border-radius: 0.9rem;
+  background: var(--color-surface, transparent);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+
+button.mw-forecast__row {
+  cursor: pointer;
+}
+
+button.mw-forecast__row:hover,
+button.mw-forecast__row:focus-visible,
+button.mw-forecast__row[aria-expanded="true"] {
+  border-color: var(--widget-accent, #0369A1);
+}
+
+.mw-forecast__date {
+  font-weight: 650;
+}
+
+.mw-forecast__periods {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.25rem;
+  text-align: center;
+}
+
+.mw-forecast__period {
+  display: grid;
+  place-items: center;
+}
+
+.mw-forecast__period i,
+.mw-forecast__period svg,
+.mw-hour__weather i,
+.mw-hour__weather svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.mw-forecast__temps,
+.mw-forecast__precip,
+.mw-forecast__wind {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mw-forecast__temps {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.mw-forecast__slash {
+  color: var(--color-text-secondary, #94a3b8);
+}
+
+.mw-forecast__high {
+  color: #0284c7;
+  font-weight: 650;
+}
+
+.mw-forecast__low {
+  color: #e11d48;
+}
+
+.mw-forecast__precip,
+.mw-forecast__wind {
+  text-align: end;
+}
+
+.mw-forecast__hours {
+  padding: 0.2rem 0.2rem 0.6rem;
+}
+
+.mw-hour__weather {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+@container mw (max-width: 640px) {
+  .mw-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .mw-rule {
+    width: 100%;
+    height: 1px;
+  }
+}
+
+@media (max-width: 720px) {
+  .mw-forecast__head {
+    display: none;
+  }
+
+  .mw-forecast__row {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "date temps"
+      "periods wind"
+      "periods precip";
+  }
+
+  .mw-forecast__date { grid-area: date; }
+  .mw-forecast__periods { grid-area: periods; }
+  .mw-forecast__temps { grid-area: temps; }
+  .mw-forecast__wind { grid-area: wind; }
+  .mw-forecast__precip { grid-area: precip; }
 }
 
 .mw-results {
