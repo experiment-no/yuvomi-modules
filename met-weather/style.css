@@ -81,7 +81,7 @@
 }
 
 .mw-chart__precip {
-  fill: #38bdf8;
+  fill: var(--weather-rain, var(--chart-series-4, #0A5C9E));
   opacity: 0.8;
 }
 
@@ -119,7 +119,7 @@
   width: 0.9rem;
   height: 0.9rem;
   border-radius: 0.2rem;
-  background: #38bdf8;
+  background: var(--weather-rain, var(--chart-series-4, #0A5C9E));
 }
 
 .mw-swatch--temp {
@@ -331,18 +331,18 @@ div.mw-face {
   width: calc((var(--to) - var(--from)) * 100%);
   height: 100%;
   border-radius: 999px;
-  background: #3b82f6;
+  background: var(--weather-band-cold, #0663C7);
 }
 
 .mw-span--cold i {
-  background: #22d3ee;
+  background: var(--weather-band-icy, #0E7490);
 }
 
 .mw-graph {
-  padding: 0.6rem 0.4rem 0.45rem;
-  border-radius: 0.9rem;
-  background: #f8fafc;
-  color: #0f172a;
+  padding: 0.7rem 0.15rem 0.15rem;
+  border-top: 1px solid var(--color-border, rgba(127, 127, 127, 0.35));
+  background: transparent;
+  color: inherit;
 }
 
 .mw-graph__days,
@@ -365,7 +365,7 @@ div.mw-face {
 
 .mw-graph__day {
   font-size: 0.75rem;
-  color: #64748b;
+  color: var(--color-text-secondary, inherit);
 }
 
 .mw-graph__icon i,
@@ -381,41 +381,41 @@ div.mw-face {
 }
 
 .mw-graph__grid {
-  stroke: #e2e8f0;
+  stroke: var(--color-border, rgba(127, 127, 127, 0.45));
   stroke-width: 1;
 }
 
 .mw-graph__zero {
-  stroke: #cbd5e1;
+  stroke: var(--color-border-strong, var(--color-border, rgba(127, 127, 127, 0.7)));
   stroke-width: 1;
   stroke-dasharray: 3 3;
 }
 
 .mw-graph__temp {
   fill: none;
-  stroke: #dc2626;
+  stroke: var(--chart-series-3, #C2410C);
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
 
 .mw-graph__precip {
-  fill: #3b82f6;
+  fill: var(--weather-rain, var(--chart-series-4, #0A5C9E));
 }
 
 .mw-graph__max {
-  stroke: #93c5fd;
+  stroke: var(--chart-series-4, #0284C7);
   stroke-width: 0.6;
 }
 
 .mw-graph__hatch {
-  stroke: #60a5fa;
+  stroke: var(--chart-series-4, #0284C7);
   stroke-width: 2;
 }
 
 .mw-graph__wind {
   fill: none;
-  stroke: #7c3aed;
+  stroke: var(--chart-series-1, #4F4DC9);
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
@@ -423,18 +423,18 @@ div.mw-face {
 
 .mw-graph__gust {
   fill: none;
-  stroke: #7c3aed;
+  stroke: var(--chart-series-1, #4F4DC9);
   stroke-width: 1.6;
   stroke-dasharray: 5 4;
   stroke-linejoin: round;
 }
 
 .mw-graph__arrow {
-  fill: #64748b;
+  fill: var(--color-text-tertiary, var(--color-text-secondary, currentColor));
 }
 
 .mw-graph__tick {
-  fill: #64748b;
+  fill: var(--color-text-tertiary, var(--color-text-secondary, currentColor));
   font-size: 11px;
 }
 
@@ -443,7 +443,7 @@ div.mw-face {
   flex-wrap: wrap;
   gap: 0.7rem 1rem;
   margin-top: 0.35rem;
-  color: #475569;
+  color: var(--color-text-secondary, inherit);
   font-size: 0.78rem;
 }
 
@@ -457,25 +457,25 @@ div.mw-face {
   width: 0.8rem;
   height: 0.28rem;
   border-radius: 999px;
-  background: #dc2626;
+  background: var(--chart-series-3, #C2410C);
 }
 
 .mw-graph__swatch--precip {
-  background: #3b82f6;
+  background: var(--weather-rain, var(--chart-series-4, #0A5C9E));
 }
 
 .mw-graph__swatch--max {
-  background: repeating-linear-gradient(135deg, #93c5fd, #93c5fd 2px, transparent 2px, transparent 4px);
+  background: repeating-linear-gradient(135deg, var(--chart-series-4, #0284C7) 0 2px, transparent 2px 4px);
 }
 
 .mw-graph__swatch--wind,
 .mw-graph__swatch--gust {
-  background: #7c3aed;
+  background: var(--chart-series-1, #4F4DC9);
 }
 
 .mw-graph__updated {
   margin: 0.35rem 0 0;
-  color: #64748b;
+  color: var(--color-text-tertiary, var(--color-text-secondary, inherit));
   font-size: 0.78rem;
 }
 
@@ -575,12 +575,12 @@ button.mw-forecast__row[aria-expanded="true"] {
 }
 
 .mw-forecast__high {
-  color: #0284c7;
+  color: var(--color-info, #0284C7);
   font-weight: 650;
 }
 
 .mw-forecast__low {
-  color: #e11d48;
+  color: var(--color-danger, #B91C1C);
 }
 
 .mw-forecast__precip,

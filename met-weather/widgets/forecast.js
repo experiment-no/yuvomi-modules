@@ -61,8 +61,7 @@ export async function renderWidget(container, context = {}) {
 export function showWidget(container, data, options = {}) {
   container.style.setProperty('--seal-accent', ACCENT);
   container.style.setProperty('--widget-accent', ACCENT);
-  const open = Boolean(container._mwOpen) && chartPoints(data).length > 1;
-  container.replaceChildren(header(options.reload), body(container, data, open));
+  container.replaceChildren(header(options.reload), body(data));
   fitTile(container);
   paintIcons(container);
 }
@@ -80,7 +79,7 @@ function fitTile(container) {
     const header = container.querySelector('.widget__header')?.offsetHeight || 0;
     const strip = container.querySelector('.mw-strip')?.offsetHeight || 0;
     const graph = container.querySelector('.mw-graph');
-    const extra = graph && !graph.hidden ? graph.offsetHeight + 12 : 0;
+    const extra = graph ? graph.offsetHeight + 12 : 0;
     if (!header && !strip) return;
     const rows = Math.ceil((header + strip + extra + 16) / 4);
     wrapper.style.setProperty('--tile-rows', String(Math.max(1, rows)));
@@ -116,7 +115,7 @@ function header(reload) {
   return bar;
 }
 
-function body(container, data, open) {
+function body(data) {
   const wrap = document.createElement('div');
   wrap.className = 'widget__body mw-widget';
   if (!data?.configured || !data.current) {
@@ -126,27 +125,12 @@ function body(container, data, open) {
     wrap.append(empty);
     return wrap;
   }
-  const points = chartPoints(data);
-  const face = document.createElement(points.length > 1 ? 'button' : 'div');
+  const face = document.createElement('div');
   face.className = 'mw-face';
   face.append(strip(data, locale()));
   wrap.append(face);
-  if (points.length < 2) return wrap;
-  face.type = 'button';
-  face.setAttribute('aria-expanded', open ? 'true' : 'false');
-  face.setAttribute('aria-controls', 'mw-widget-graph');
-  const graph = graphFrame(points, locale(), { updated: data.updated });
-  graph.id = 'mw-widget-graph';
-  graph.hidden = !open;
-  face.addEventListener('click', () => {
-    const next = face.getAttribute('aria-expanded') !== 'true';
-    face.setAttribute('aria-expanded', next ? 'true' : 'false');
-    graph.hidden = !next;
-    container._mwOpen = next;
-    fitTile(container);
-    if (next) paintIcons(graph);
-  });
-  wrap.append(graph);
+  const points = chartPoints(data);
+  if (points.length > 1) wrap.append(graphFrame(points, locale(), { updated: data.updated }));
   return wrap;
 }
 
