@@ -1,7 +1,12 @@
-import { sliceHours, symbolIcon, symbolKey, compass, extent, formatNumber } from './lib/forecast.js';
+import { weatherApi } from './browser.js';
 import {
-  dayLabel,
-  drawChart,
+  PERIODS,
+  compass,
+  dayHeading,
+  symbolIcon,
+  symbolKey,
+} from './lib/forecast.js';
+import {
   ensureStyle,
   errorBody,
   hourLabel,
@@ -13,7 +18,6 @@ import {
   stopped,
   tr,
 } from './lib/ui.js';
-import { weatherApi } from './browser.js';
 
 const ACCENT = '#0369A1';
 
@@ -24,10 +28,10 @@ export async function render(container, context = {}) {
   const token = {};
   container._mwToken = token;
   container.style.setProperty('--widget-accent', ACCENT);
-  await paint(container, signal, token, 1);
+  await paint(container, signal, token);
 }
 
-async function paint(container, signal, token, days) {
+async function paint(container, signal, token) {
   if (stopped(container, signal, token)) return;
   let data;
   try {
@@ -38,15 +42,15 @@ async function paint(container, signal, token, days) {
       variant: 'error',
       title: tr('error.loadTitle'),
       description: errorBody(err),
-      action: { label: tr('error.retry'), onClick: () => { void paint(container, signal, token, days); } },
+      action: { label: tr('error.retry'), onClick: () => { void paint(container, signal, token); } },
     });
     return;
   }
   if (stopped(container, signal, token)) return;
-  draw(container, data, signal, token, days);
+  showPage(container, data, signal);
 }
 
-function draw(container, data, signal, token, days) {
+export function showPage(container, data, signal) {
   const lang = locale();
   const root = document.createElement('div');
   root.className = 'mw-page';
@@ -71,118 +75,151 @@ function draw(container, data, signal, token, days) {
     return;
   }
 
-  const hours = sliceHours(data.hours, days);
-  const current = data.current || hours[0];
-  if (hours.length) {
-    body.append(hero(data.place, current, extent(hours), lang));
-    body.append(tabs(days, signal, (next) => {
-      draw(container, data, signal, token, next);
-    }));
-    body.append(chartBlock(hours, lang));
-    body.append(credit(data));
-    body.append(table(hours, lang));
-  } else {
-    const shown = (Array.isArray(data.days) ? data.days : []).slice(0, days === 1 ? 1 : 2);
-    body.append(hero(data.place, current, dayExtent(shown), lang));
-    if (data.days?.length > 1) {
-      body.append(tabs(days, signal, (next) => {
-        draw(container, data, signal, token, next);
-      }));
-    }
-    if (shown.length) body.append(dayTable(shown, lang));
-    body.append(credit(data));
+  body.append(hero(data, lang));
+  const days = Array.isArray(data.days) ? data.days : [];
+  if (days.length) {
+    body.append(columnHead());
+    const list = document.createElement('div');
+    list.className = 'mw-forecasts';
+    for (const day of days) list.append(dayRow(day, lang, signal));
+    body.append(list);
   }
+  body.append(credit(data));
   root.append(body);
   container.replaceChildren(root);
   paintIcons(container);
 }
 
-function dayExtent(days) {
-  const temps = days.flatMap((day) => [day.low, day.high]).filter(Number.isFinite);
-  if (!temps.length) return { low: null, high: null };
-  return { low: Math.min(...temps), high: Math.max(...temps) };
+function degrees(value) {
+  if (!Number.isFinite(value)) return '–';
+  return `${Math.round(value)}°`;
 }
 
-function hero(place, current, span, lang) {
+function measure(value, unit, digits, lang) {
+  if (!Number.isFinite(value)) return '–';
+  const formatted = new Intl.NumberFormat(lang === 'nb' ? 'nb-NO' : 'en-GB', {
+    maximumFractionDigits: digits,
+  }).format(value);
+  return `${formatted} ${unit}`;
+}
+
+function condition(symbol) {
+  const text = tr(`symbol.${symbolKey(symbol)}`);
+  return text.startsWith('extensions.') ? symbolKey(symbol) : text;
+}
+
+function hero(data, lang) {
   const wrap = document.createElement('div');
   wrap.className = 'mw-hero';
   const badge = document.createElement('div');
   badge.className = 'mw-hero__icon';
-  badge.append(icon(symbolIcon(current?.symbol)));
+  badge.append(icon(symbolIcon(data.current?.symbol)));
   const text = document.createElement('div');
   const temp = document.createElement('p');
   temp.className = 'mw-temp';
-  temp.textContent = `${formatNumber(current?.temp, 1)}°`;
+  temp.textContent = Number.isFinite(data.current?.temp) ? `${Math.round(data.current.temp)}°C` : '–';
   const where = document.createElement('p');
   where.className = 'mw-place';
-  where.textContent = placeLine(place);
+  where.textContent = [data.place?.name, data.place?.municipality && data.place.municipality !== data.place.name ? data.place.municipality : '', data.place?.county].filter(Boolean).join(' · ');
   const summary = document.createElement('p');
   summary.className = 'mw-summary';
-  const condition = tr(`symbol.${symbolKey(current?.symbol)}`);
-  const wind = [formatNumber(current?.wind, 1), compass(current?.direction, lang)].filter(Boolean).join(' ');
-  const highLow = Number.isFinite(span?.low) && Number.isFinite(span?.high)
-    ? tr('page.highLow', { low: formatNumber(span.low, 1), high: formatNumber(span.high, 1) })
-    : '';
-  summary.textContent = [
-    condition.startsWith('extensions.') ? symbolKey(current?.symbol) : condition,
-    highLow,
-    wind ? `${tr('page.wind')} ${wind} m/s` : '',
-  ].filter(Boolean).join(' · ');
+  const wind = [measure(data.current?.wind, 'm/s', 0, lang), compass(data.current?.direction, lang)].filter((part) => part && part !== '–').join(' ');
+  summary.textContent = [condition(data.current?.symbol), wind].filter(Boolean).join(' · ');
   text.append(temp, where, summary);
   wrap.append(badge, text);
   return wrap;
 }
 
-function placeLine(place) {
-  const bits = [place?.name, place?.municipality && place.municipality !== place.name ? place.municipality : '', place?.county];
-  return bits.filter(Boolean).join(' · ');
-}
-
-function tabs(days, signal, select) {
-  const bar = document.createElement('div');
-  bar.className = 'mw-tabs';
-  bar.setAttribute('role', 'tablist');
-  for (const value of [1, 2]) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'mw-tab';
-    button.setAttribute('role', 'tab');
-    button.setAttribute('aria-selected', value === days ? 'true' : 'false');
-    button.textContent = tr(value === 1 ? 'page.day' : 'page.twoDays');
-    listen(button, 'click', () => select(value), signal);
-    bar.append(button);
+function columnHead() {
+  const row = document.createElement('div');
+  row.className = 'mw-forecast__head';
+  row.append(document.createElement('span'));
+  const periods = document.createElement('span');
+  periods.className = 'mw-forecast__periods';
+  for (const id of PERIODS) {
+    const cell = document.createElement('span');
+    cell.textContent = tr(`page.${id}`);
+    periods.append(cell);
   }
-  return bar;
+  row.append(periods);
+  for (const key of ['page.temp', 'page.precip', 'page.wind']) {
+    const cell = document.createElement('span');
+    cell.className = 'mw-forecast__measure';
+    cell.textContent = tr(key);
+    row.append(cell);
+  }
+  return row;
 }
 
-function chartBlock(hours, lang) {
-  const block = document.createElement('div');
-  const chart = document.createElement('div');
-  chart.className = 'mw-chart';
-  chart.append(drawChart(hours, lang));
-  const legend = document.createElement('p');
-  legend.className = 'mw-legend';
-  const temp = document.createElement('span');
-  const tempSwatch = document.createElement('i');
-  tempSwatch.className = 'mw-swatch mw-swatch--temp';
-  temp.append(tempSwatch, document.createTextNode(tr('page.temp')));
+function dayRow(day, lang, signal) {
+  const article = document.createElement('article');
+  article.className = 'mw-forecast';
+  const hours = Array.isArray(day.hours) ? day.hours : [];
+  const panelId = `mw-hours-${day.date}`;
+  const head = document.createElement(hours.length ? 'button' : 'div');
+  head.className = 'mw-forecast__row';
+  if (hours.length) {
+    head.type = 'button';
+    head.setAttribute('aria-expanded', 'false');
+    head.setAttribute('aria-controls', panelId);
+  }
+  const date = document.createElement('span');
+  date.className = 'mw-forecast__date';
+  date.textContent = dayHeading(day.date, lang);
+  const periods = document.createElement('span');
+  periods.className = 'mw-forecast__periods';
+  for (const id of PERIODS) {
+    const cell = document.createElement('span');
+    cell.className = 'mw-forecast__period';
+    cell.title = tr(`page.${id}`);
+    const symbol = day.periods?.[id]?.symbol;
+    if (symbol) cell.append(icon(symbolIcon(symbol)));
+    periods.append(cell);
+  }
+  const temps = document.createElement('span');
+  temps.className = 'mw-forecast__temps';
+  const high = document.createElement('span');
+  high.className = 'mw-forecast__high';
+  high.textContent = degrees(day.high);
+  const slash = document.createElement('span');
+  slash.className = 'mw-forecast__slash';
+  slash.textContent = '/';
+  const low = document.createElement('span');
+  low.className = 'mw-forecast__low';
+  low.textContent = degrees(day.low);
+  temps.append(high, slash, low);
   const precip = document.createElement('span');
-  const precipSwatch = document.createElement('i');
-  precipSwatch.className = 'mw-swatch';
-  precip.append(precipSwatch, document.createTextNode(tr('page.precip')));
-  legend.append(temp, precip);
-  block.append(chart, legend);
-  return block;
+  precip.className = 'mw-forecast__precip';
+  precip.textContent = measure(day.precip, 'mm', 1, lang);
+  const wind = document.createElement('span');
+  wind.className = 'mw-forecast__wind';
+  wind.textContent = measure(day.wind, 'm/s', 0, lang);
+  head.append(date, periods, temps, precip, wind);
+  article.append(head);
+  if (!hours.length) return article;
+  const panel = document.createElement('div');
+  panel.id = panelId;
+  panel.className = 'mw-forecast__hours';
+  panel.hidden = true;
+  panel.append(hourTable(hours, lang));
+  listen(head, 'click', () => {
+    const next = head.getAttribute('aria-expanded') !== 'true';
+    head.setAttribute('aria-expanded', next ? 'true' : 'false');
+    panel.hidden = !next;
+    if (next) paintIcons(panel);
+  }, signal);
+  article.append(panel);
+  return article;
 }
 
-function table(hours, lang) {
+function hourTable(hours, lang) {
   const wrap = document.createElement('div');
   wrap.className = 'mw-table-wrap';
-  const tableEl = document.createElement('table');
-  tableEl.className = 'mw-table';
+  const table = document.createElement('table');
+  table.className = 'mw-table';
   const head = document.createElement('thead');
   const row = document.createElement('tr');
-  for (const name of ['page.time', 'page.temp', 'page.precip', 'page.wind', 'page.weather']) {
+  for (const name of ['page.time', 'page.weather', 'page.temp', 'page.precip', 'page.wind']) {
     const cell = document.createElement('th');
     cell.scope = 'col';
     cell.textContent = tr(name);
@@ -190,64 +227,29 @@ function table(hours, lang) {
   }
   head.append(row);
   const body = document.createElement('tbody');
-  const withDay = hours.length > 30;
   for (const point of hours) {
     const line = document.createElement('tr');
-    const condition = tr(`symbol.${symbolKey(point.symbol)}`);
-    const values = [
-      hourLabel(point.time, withDay, lang),
-      `${formatNumber(point.temp, 1)}°`,
-      `${formatNumber(point.precip, 1)} mm`,
-      `${formatNumber(point.wind, 1)} ${compass(point.direction, lang)}`.trim(),
-      condition.startsWith('extensions.') ? symbolKey(point.symbol) : condition,
-    ];
-    for (const value of values) {
-      const cell = document.createElement('td');
-      cell.textContent = value;
-      line.append(cell);
-    }
+    const time = document.createElement('td');
+    time.textContent = hourLabel(point.time, false, lang);
+    const weather = document.createElement('td');
+    weather.className = 'mw-hour__weather';
+    weather.append(icon(symbolIcon(point.symbol)));
+    const label = document.createElement('span');
+    label.textContent = condition(point.symbol);
+    weather.append(label);
+    const temp = document.createElement('td');
+    temp.textContent = degrees(point.temp);
+    const precip = document.createElement('td');
+    precip.textContent = measure(point.precip, 'mm', 1, lang);
+    const wind = document.createElement('td');
+    const speed = measure(point.wind, 'm/s', 1, lang);
+    const direction = compass(point.direction, lang);
+    wind.textContent = [speed === '–' ? '' : speed, direction].filter(Boolean).join(' ') || '–';
+    line.append(time, weather, temp, precip, wind);
     body.append(line);
   }
-  tableEl.append(head, body);
-  wrap.append(tableEl);
-  return wrap;
-}
-
-function dayTable(days, lang) {
-  const wrap = document.createElement('div');
-  wrap.className = 'mw-table-wrap';
-  const tableEl = document.createElement('table');
-  tableEl.className = 'mw-table';
-  const head = document.createElement('thead');
-  const row = document.createElement('tr');
-  for (const name of ['page.time', 'page.temp', 'page.weather']) {
-    const cell = document.createElement('th');
-    cell.scope = 'col';
-    cell.textContent = tr(name);
-    row.append(cell);
-  }
-  head.append(row);
-  const body = document.createElement('tbody');
-  for (const day of days) {
-    const line = document.createElement('tr');
-    const condition = tr(`symbol.${symbolKey(day.symbol)}`);
-    const range = Number.isFinite(day.low) && Number.isFinite(day.high)
-      ? tr('page.highLow', { low: formatNumber(day.low, 1), high: formatNumber(day.high, 1) })
-      : '';
-    const values = [
-      dayLabel(day.date, lang),
-      range,
-      condition.startsWith('extensions.') ? symbolKey(day.symbol) : condition,
-    ];
-    for (const value of values) {
-      const cell = document.createElement('td');
-      cell.textContent = value;
-      line.append(cell);
-    }
-    body.append(line);
-  }
-  tableEl.append(head, body);
-  wrap.append(tableEl);
+  table.append(head, body);
+  wrap.append(table);
   return wrap;
 }
 
@@ -257,7 +259,7 @@ function credit(data) {
   const met = document.createElement('a');
   met.href = data?.attribution?.met || 'https://www.met.no/';
   met.textContent = 'Meteorologisk institutt';
-  if (data?.source === 'host') {
+  if (data?.source === 'host' || data?.source === 'open-meteo') {
     const openMeteo = document.createElement('a');
     openMeteo.href = data.attribution?.openMeteo || 'https://open-meteo.com/';
     openMeteo.textContent = 'Open-Meteo';

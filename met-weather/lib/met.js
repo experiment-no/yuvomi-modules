@@ -4,7 +4,7 @@
  */
 
 export const USER_AGENT = 'yuvomi-met-weather/1.0 https://github.com/experiment-no/yuvomi-modules';
-const FORECAST_URL = 'https://api.met.no/weatherapi/locationforecast/2.0/compact';
+const FORECAST_URL = 'https://api.met.no/weatherapi/locationforecast/2.0/complete';
 const SEARCH_URL = 'https://ws.geonorge.no/stedsnavn/v1/navn';
 const PLACE_URL = 'https://ws.geonorge.no/stedsnavn/v1/sted';
 

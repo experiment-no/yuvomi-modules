@@ -12,7 +12,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { PREFIX, forecastFromMet, inNorway, roundCoord } from '../lib/forecast.js';
+import { FORECAST_HOURS, PREFIX, forecastFromMet, inNorway, roundCoord } from '../lib/forecast.js';
 import { UpstreamError, createMetClient } from '../lib/met.js';
 import { placeFromLookup, placesFromSearch } from '../lib/places.js';
 
@@ -259,7 +259,7 @@ async function routeRequest({ method, route, url, body, actor, met, load, save, 
     if (loaded.corrupt) return { status: 500, body: { error: 'internal', reason: 'internal' } };
     if (!loaded.place) return { status: 200, body: { configured: false, place: null, hours: [] } };
     const forecast = await met.forecast(loaded.place.lat, loaded.place.lon);
-    const view = forecastFromMet(forecast.body, now(), 48);
+    const view = forecastFromMet(forecast.body, now(), FORECAST_HOURS);
     return {
       status: 200,
       body: {
@@ -267,6 +267,7 @@ async function routeRequest({ method, route, url, body, actor, met, load, save, 
         place: loaded.place,
         current: view.current,
         hours: view.hours,
+        updated: new Date(now()).toISOString(),
         attribution: {
           met: 'https://www.met.no/',
           places: 'https://www.kartverket.no/',
