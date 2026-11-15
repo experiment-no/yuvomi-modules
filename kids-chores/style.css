@@ -252,10 +252,17 @@ button.kc-chore:focus-visible {
   gap: 0.4rem 0.75rem;
 }
 
-.kc-day {
+.kc-day,
+.kc-member {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
+}
+
+.kc-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.9rem;
 }
 
 .kc-editor {

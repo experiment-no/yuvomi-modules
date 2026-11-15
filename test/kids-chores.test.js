@@ -13,9 +13,12 @@ import {
   PREFIX,
   PROGRESS_ICONS,
   buildToday,
+  commit,
   defaultState,
   handle,
   normalizeState,
+  openDocument,
+  project,
   shouldShowOnWall,
   webhookDenied,
   webhookEvent,
@@ -336,7 +339,7 @@ test('a negative webhook number blocks, and a later goal can fire again after re
   hooks.log.length = 0;
   const done = await ask(state, 'POST', '/complete', { id: created.body.chore.id }, admin, hooks);
   assert.equal(done.body.goalReached, true);
-  assert.equal(done.state.goals[done.body.date].notified, true);
+  assert.equal(done.state.goals[done.body.date][admin.id].notified, true);
   const reset = await ask(done.state, 'POST', '/reset-today', {}, admin, calls());
   hooks.log.length = 0;
   const again = await ask(reset.state, 'POST', '/complete', { id: created.body.chore.id }, admin, hooks);
@@ -670,4 +673,61 @@ test('overview choresApi returns today and completes a chore without the service
     () => choresApi('/complete', { method: 'POST', body: { id: 'missing' } }),
     (err) => err.reason === 'missing' && err.status === 404,
   );
+});
+
+test('a chore includes every member until one is cleared, and each member completes their own', async () => {
+  let state = defaultState();
+  const created = await ask(state, 'POST', '/chores', {
+    title: 'Seng',
+    points: 2,
+    days: [5],
+    excludedMemberIds: ['b'],
+  });
+  state = created.state;
+  assert.deepEqual(created.body.chore.excludedMemberIds, ['b']);
+  const ada = await ask(state, 'GET', '/today');
+  const bea = await ask(state, 'GET', '/today', undefined, member);
+  assert.equal(ada.body.items.some((item) => item.title === 'Seng'), true);
+  assert.equal(bea.body.items.some((item) => item.title === 'Seng'), false);
+  const hidden = await ask(state, 'POST', '/complete', { id: created.body.chore.id }, member);
+  assert.equal(hidden.status, 404);
+
+  const done = await ask(state, 'POST', '/complete', { id: created.body.chore.id });
+  assert.equal(done.body.earned, 2);
+  const beaAfter = await ask(done.state, 'GET', '/today', undefined, member);
+  assert.equal(beaAfter.body.earned, 0);
+  const adaAgain = await ask(done.state, 'GET', '/today');
+  assert.equal(adaAgain.body.items[0].done, true);
+
+  const legacy = defaultState();
+  legacy.chores = created.state.chores;
+  legacy.completions[done.body.date] = { [created.body.chore.id]: { at: FRIDAY.toISOString(), by: 'Ada' } };
+  assert.equal(buildToday(legacy, FRIDAY, member).items[0], undefined);
+  const adaLegacy = buildToday({ ...legacy, chores: [{ ...created.state.chores[0], excludedMemberIds: [] }] }, FRIDAY, member);
+  assert.equal(adaLegacy.items[0].done, true);
+});
+
+test('sharing off keeps one list per account, and the same account is one list', async () => {
+  const doc = openDocument({
+    settings: { shareAcrossUsers: false },
+    shared: { chores: [], completions: {}, goals: {} },
+    private: {},
+  });
+  let view = project(doc, admin);
+  const created = await ask(view, 'POST', '/chores', { title: 'PC', points: 1, days: [5] });
+  commit(doc, admin, created.state);
+  const ipad = project(doc, admin);
+  assert.equal(ipad.chores[0].title, 'PC');
+  const other = project(doc, member);
+  assert.equal(other.chores.length, 0);
+
+  const shared = openDocument(null);
+  let household = project(shared, admin);
+  const chore = await ask(household, 'POST', '/chores', { title: 'Felles', points: 1, days: [5] });
+  commit(shared, admin, chore.state);
+  const turnedOff = await ask(project(shared, admin), 'PUT', '/settings', { shareAcrossUsers: false });
+  commit(shared, admin, turnedOff.state);
+  assert.equal(project(shared, admin).chores[0].title, 'Felles');
+  assert.equal(project(shared, member).chores.length, 0);
+  assert.equal(shared.shared.chores.length, 0);
 });

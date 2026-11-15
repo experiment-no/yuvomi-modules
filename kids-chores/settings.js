@@ -33,7 +33,9 @@ async function paint(container, signal, token, editing) {
   if (stopped(container, signal, token)) return;
   let data;
   try {
-    data = await client.chores(signal);
+    const [chores, members] = await Promise.all([client.chores(signal), loadMembers(signal)]);
+    data = chores;
+    data.members = members;
   } catch (err) {
     if (stopped(container, signal, token) || err?.name === 'AbortError') return;
     await showEmpty(container, {
@@ -89,6 +91,7 @@ function settingsForm(data, signal, token, container) {
   const icons = iconPicker(settings.progressIcon);
   const notify = toggleField(tr('settings.notifyAdmin'), settings.notifyAdmin !== false);
   const wall = toggleField(tr('settings.showOnWall'), settings.showOnWall === true);
+  const share = toggleField(tr('settings.share'), settings.shareAcrossUsers !== false);
 
   form.append(
     field(tr('settings.displayTitle'), title),
@@ -99,6 +102,8 @@ function settingsForm(data, signal, token, container) {
     iconField(icons),
     notify.wrap,
     wall.wrap,
+    share.wrap,
+    hint(tr('settings.shareHint')),
   );
 
   const actions = document.createElement('div');
@@ -136,6 +141,7 @@ function settingsForm(data, signal, token, container) {
         progressIcon: chosenIcon(icons),
         notifyAdmin: notify.input.checked,
         showOnWall: wall.input.checked,
+        shareAcrossUsers: share.input.checked,
         webhookUrl: webhook.value,
       }, signal);
       if (stopped(container, signal, token)) return;
@@ -228,7 +234,11 @@ function choreRow(chore, index, total, data, signal, token, container) {
   name.textContent = chore.title;
   const meta = document.createElement('span');
   meta.className = 'kc-row__meta';
+  const leftOut = leftOutNames(chore, data.members);
   meta.textContent = `${tr('chores.points', { points: chore.points })} · ${dayNames(chore.days)}`;
+  if (data.settings?.shareAcrossUsers !== false && leftOut) {
+    meta.textContent += ` · ${tr('chores.without', { names: leftOut })}`;
+  }
   main.append(name, meta);
   if (chore.requireAboveDone || chore.webhookUrl || chore.resetWebhookUrl) {
     const badges = document.createElement('span');
@@ -317,6 +327,7 @@ function editor(chore, data, signal, token, container) {
   });
   const active = toggleField(tr('chores.field.active'), chore ? chore.active !== false : true);
   const above = toggleField(tr('chores.field.requireAbove'), chore?.requireAboveDone === true);
+  const members = memberPicker(chore, data);
   const webhook = input(chore?.webhookUrl || '', 'url');
   const reset = input(chore?.resetWebhookUrl || '', 'url');
   for (const el of [webhook, reset]) {
@@ -330,6 +341,7 @@ function editor(chore, data, signal, token, container) {
     field(tr('chores.field.days'), dayBox),
     active.wrap,
     above.wrap,
+    members.field,
     field(tr('chores.field.webhook'), webhook),
     field(tr('chores.field.resetWebhook'), reset),
   );
@@ -363,6 +375,7 @@ function editor(chore, data, signal, token, container) {
       days: WEEKDAYS.filter((_, index) => dayInputs[index].checked),
       active: active.input.checked,
       requireAboveDone: above.input.checked,
+      ...(members.ids ? { excludedMemberIds: members.ids() } : {}),
       webhookUrl: webhook.value,
       resetWebhookUrl: reset.value,
     };
@@ -448,6 +461,62 @@ function iconField(icons) {
 function chosenIcon(group) {
   const picked = group.querySelector('input:checked');
   return picked ? picked.value : 'sun';
+}
+
+function hint(text) {
+  const el = document.createElement('p');
+  el.className = 'form-hint';
+  el.textContent = text;
+  return el;
+}
+
+function leftOutNames(chore, members) {
+  const excluded = new Set((chore?.excludedMemberIds || []).map(String));
+  if (!excluded.size || !Array.isArray(members)) return '';
+  return members.filter((member) => excluded.has(member.id)).map((member) => member.name).join(', ');
+}
+
+function memberPicker(chore, data) {
+  if (data.settings?.shareAcrossUsers === false) {
+    return { field: hint(tr('settings.shareOff')), ids: null };
+  }
+  const members = Array.isArray(data.members) ? data.members : [];
+  if (!members.length) return { field: hint(tr('chores.membersMissing')), ids: null };
+  const excluded = new Set((chore?.excludedMemberIds || []).map(String));
+  const box = document.createElement('div');
+  box.className = 'kc-members';
+  const inputs = members.map((member) => {
+    const label = document.createElement('label');
+    label.className = 'kc-member';
+    const inputEl = document.createElement('input');
+    inputEl.type = 'checkbox';
+    inputEl.checked = !excluded.has(member.id);
+    const text = document.createElement('span');
+    text.textContent = member.name;
+    label.append(inputEl, text);
+    box.append(label);
+    return { member, inputEl };
+  });
+  return {
+    field: field(tr('chores.field.members'), box, tr('chores.membersHint')),
+    ids() {
+      return inputs.filter((row) => !row.inputEl.checked).map((row) => row.member.id);
+    },
+  };
+}
+
+async function loadMembers(signal) {
+  try {
+    const { api } = await import('/api.js');
+    const res = await api.get('/family/members', { signal });
+    const rows = Array.isArray(res?.data) ? res.data : [];
+    return rows
+      .map((row) => ({ id: String(row?.id ?? ''), name: String(row?.display_name || row?.id || '').trim() }))
+      .filter((row) => row.id && row.name);
+  } catch (err) {
+    if (err?.name === 'AbortError') throw err;
+    return [];
+  }
 }
 
 function input(value, type) {

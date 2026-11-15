@@ -11,7 +11,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { PREFIX, defaultState, handle, normalizeState } from '../lib/logic.js';
+import { PREFIX, commit, handle, openDocument, project } from '../lib/logic.js';
 import { postWebhook } from '../lib/webhook.js';
 
 const CSRF_HEADER = 'x-kids-chores-csrf';
@@ -32,19 +32,19 @@ export function createServer(options = {}) {
 
   function load() {
     try {
-      return { state: normalizeState(JSON.parse(fs.readFileSync(statePath, 'utf8'))) };
+      return { doc: openDocument(JSON.parse(fs.readFileSync(statePath, 'utf8'))) };
     } catch (err) {
-      if (err && err.code === 'ENOENT') return { state: defaultState() };
+      if (err && err.code === 'ENOENT') return { doc: openDocument(null) };
       return { corrupt: true };
     }
   }
 
-  function save(state) {
+  function save(doc) {
     const dir = path.dirname(statePath);
     fs.mkdirSync(dir, { recursive: true });
     fs.chmodSync(dir, 0o700);
     const tmp = `${statePath}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+    fs.writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o600 });
     fs.renameSync(tmp, statePath);
     fs.chmodSync(statePath, 0o600);
   }
@@ -201,7 +201,7 @@ export function createServer(options = {}) {
         if (loaded.corrupt) {
           return { status: 500, body: { error: 'internal', reason: 'internal', ...publicActor(actor) } };
         }
-        const outcome = await handle(loaded.state, {
+        const outcome = await handle(project(loaded.doc, actor), {
           method,
           path: route,
           body,
@@ -210,9 +210,9 @@ export function createServer(options = {}) {
           postWebhook: (target, payload) => postWebhook(target, payload, AbortSignal.timeout(15000)),
         });
         if (outcome.status < 400) {
-          const before = JSON.stringify(loaded.state);
-          const after = JSON.stringify(outcome.state);
-          if (before !== after) save(outcome.state);
+          const before = JSON.stringify(loaded.doc);
+          commit(loaded.doc, actor, outcome.state);
+          if (JSON.stringify(loaded.doc) !== before) save(loaded.doc);
         }
         return outcome;
       });
