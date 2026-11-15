@@ -36,6 +36,7 @@ export function defaultSettings() {
     timezone: 'Europe/Oslo',
     progressIcon: 'sun',
     shareAcrossUsers: true,
+    rolledOn: '',
   };
 }
 
@@ -125,6 +126,7 @@ export function normalizeState(raw) {
     timezone: isValidTimeZone(settings.timezone) ? settings.timezone : 'Europe/Oslo',
     progressIcon: isProgressIcon(settings.progressIcon) ? settings.progressIcon : 'sun',
     shareAcrossUsers: settings.shareAcrossUsers !== false,
+    rolledOn: /^\d{4}-\d{2}-\d{2}$/.test(settings.rolledOn) ? settings.rolledOn : '',
   };
   state.followingIds = cleanMemberIds(raw.followingIds);
   if (Array.isArray(raw.chores)) {
@@ -488,6 +490,55 @@ export function isAthomWebhook(url) {
   }
 }
 
+/**
+ * Reward webhook. A Homey address with ?event= uses the same shape as a chore:
+ * yes when the goal is reached, no when the day resets. Other addresses keep
+ * the longer event name and carry the same yes or no.
+ */
+export function rewardPayload(url, high, context) {
+  const event = webhookEvent(url, '');
+  const earned = Number.isInteger(context?.earned) ? context.earned : 0;
+  if (event) {
+    return {
+      event,
+      state: high ? 'yes' : 'no',
+      done: Boolean(high),
+      points: high ? earned : 0,
+    };
+  }
+  if (high) {
+    return {
+      state: 'yes',
+      done: true,
+      event: 'kids_chores.goal_reached',
+      module: 'kids-chores',
+      date: context?.date,
+      earned,
+      goal: context?.goal,
+      percent: 100,
+      timezone: context?.timezone,
+      triggeredBy: context?.triggeredBy,
+    };
+  }
+  return {
+    state: 'no',
+    done: false,
+    event: 'kids_chores.points_reset',
+    module: 'kids-chores',
+    date: context?.date,
+    earned: 0,
+    goal: context?.goal,
+    timezone: context?.timezone,
+  };
+}
+
+function lowTogglePayload(url) {
+  const event = webhookEvent(url, '');
+  const payload = { state: 'no', done: false };
+  if (event) payload.event = event;
+  return payload;
+}
+
 /** Body that matched a working Homey call: event, state, done, points. */
 export function choreWebhookPayload(chore, context) {
   const event = webhookEvent(chore.webhookUrl, '');
@@ -721,11 +772,19 @@ export async function handle(state, request) {
   const next = cloneState(state);
   const today = zonedCalendar(now, next.settings.timezone).date;
   prune(next, today);
+  let dayRolled = false;
+  async function rollToday() {
+    if (dayRolled || (method === 'POST' && path === '/reset-today')) return;
+    dayRolled = true;
+    await rollOverDay(next, request, actor, today);
+  }
 
   if (method === 'GET' && path === '/today') {
+    await rollToday();
     return { status: 200, state: next, body: todayBody(next, actor, now) };
   }
   if (method === 'GET' && path === '/chores') {
+    await rollToday();
     return { status: 200, state: next, body: choresBody(next, actor) };
   }
   if (method === 'PUT' && path === '/settings') {
@@ -738,6 +797,7 @@ export async function handle(state, request) {
       next.followingIds = followingIds;
     }
     next.settings = applied.settings;
+    await rollToday();
     return {
       status: 200,
       state: next,
@@ -755,6 +815,7 @@ export async function handle(state, request) {
     const maxSort = next.chores.reduce((max, chore) => Math.max(max, chore.sort), -1);
     built.chore.sort = maxSort + 1;
     next.chores.push(built.chore);
+    await rollToday();
     return { status: 201, state: next, body: { chore: cloneChore(built.chore), ...meta(actor) } };
   }
   if (method === 'PUT' && path === '/chores/reorder') {
@@ -765,6 +826,7 @@ export async function handle(state, request) {
     if (current.some((id) => !ids.includes(id))) return fail(400, 'invalid', actor, state);
     const byId = new Map(next.chores.map((chore) => [chore.id, chore]));
     next.chores = ids.map((id, index) => ({ ...byId.get(id), sort: index }));
+    await rollToday();
     return { status: 200, state: next, body: choresBody(next, actor) };
   }
   const choreMatch = path.match(/^\/chores\/([^/]+)$/);
@@ -774,15 +836,17 @@ export async function handle(state, request) {
     if (index < 0) return fail(404, 'missing', actor, state);
     if (method === 'DELETE') {
       next.chores.splice(index, 1);
+      await rollToday();
       return { status: 200, state: next, body: { deleted: id, ...meta(actor) } };
     }
     const built = choreFromBody(request.body, next.chores[index]);
     if (built.error) return fail(400, built.error, actor, state);
     next.chores[index] = built.chore;
+    await rollToday();
     return { status: 200, state: next, body: { chore: cloneChore(built.chore), ...meta(actor) } };
   }
   if (method === 'POST' && path === '/complete') {
-    return complete(next, state, request, actor, now);
+    return complete(next, state, request, actor, now, rollToday);
   }
   if (method === 'POST' && path === '/reset-today') {
     return resetToday(next, request, actor, now);
@@ -791,7 +855,9 @@ export async function handle(state, request) {
     return testWebhook(next, state, request, actor, now);
   }
   if (method === 'POST' && path === '/import') {
-    return importState(next, request, actor);
+    const imported = importState(next, request, actor);
+    if (imported.status < 400) await rollToday();
+    return imported;
   }
   return fail(404, 'missing', actor, state);
 }
@@ -802,7 +868,7 @@ function needFor(method, path) {
   return 'admin';
 }
 
-async function complete(next, original, request, actor, now) {
+async function complete(next, original, request, actor, now, rollToday) {
   const id = request.body?.id;
   if (typeof id !== 'string' || !id) return fail(400, 'invalid', actor, original);
   const viewerId = String(actor.id || 'local');
@@ -834,12 +900,14 @@ async function complete(next, original, request, actor, now) {
   }
   const doneMap = { ...(next.completions[date] || {}) };
   if (doneFor(doneMap[id], userId)) {
+    if (typeof rollToday === 'function') await rollToday();
     return { status: 200, state: next, body: todayBody(next, actor, now, userId) };
   }
   const index = scheduled.findIndex((item) => item.id === id);
   const locked = chore.requireAboveDone === true
     && scheduled.slice(0, index).some((earlier) => !doneFor(doneMap[earlier.id], userId));
   if (locked) return fail(409, 'locked', actor, original);
+  if (typeof rollToday === 'function') await rollToday();
 
   if (chore.webhookUrl) {
     const reply = await callWebhook(request.postWebhook, chore.webhookUrl, choreWebhookPayload(chore, {
@@ -866,38 +934,52 @@ async function complete(next, original, request, actor, now) {
     next.goals[date] = map;
   }
   if (crossed && next.settings.webhookUrl) {
-    await callWebhook(request.postWebhook, next.settings.webhookUrl, {
-      event: 'kids_chores.goal_reached',
-      module: 'kids-chores',
+    await callWebhook(request.postWebhook, next.settings.webhookUrl, rewardPayload(next.settings.webhookUrl, true, {
       date,
       earned: view.earned,
       goal: view.goal,
-      percent: 100,
       timezone: next.settings.timezone,
       triggeredBy: actor.name || String(actor.id || ''),
-    });
+    }));
   }
   return { status: 200, state: next, body: todayBody(next, actor, now, userId) };
 }
 
-async function resetToday(next, request, actor, now) {
-  const { date } = zonedCalendar(now, next.settings.timezone);
-  const resets = next.chores.filter((chore) => chore.resetWebhookUrl);
-  delete next.completions[date];
-  delete next.goals[date];
-  for (const chore of resets) {
-    await callWebhook(request.postWebhook, chore.resetWebhookUrl, { state: 'no', done: false });
+async function rollOverDay(next, request, actor, today) {
+  if (actor?.role !== 'admin') return;
+  const stamp = next.settings.rolledOn;
+  if (!stamp) {
+    next.settings.rolledOn = today;
+    return;
+  }
+  if (stamp >= today) return;
+  if (await sendDayLow(next, request, today)) next.settings.rolledOn = today;
+}
+
+async function sendDayLow(next, request, date) {
+  let delivered = true;
+  for (const chore of next.chores) {
+    if (!chore.resetWebhookUrl) continue;
+    const reply = await callWebhook(request.postWebhook, chore.resetWebhookUrl, lowTogglePayload(chore.resetWebhookUrl));
+    if (reply.denied) delivered = false;
   }
   if (next.settings.webhookUrl) {
-    await callWebhook(request.postWebhook, next.settings.webhookUrl, {
-      event: 'kids_chores.points_reset',
-      module: 'kids-chores',
+    const reply = await callWebhook(request.postWebhook, next.settings.webhookUrl, rewardPayload(next.settings.webhookUrl, false, {
       date,
       earned: 0,
       goal: next.settings.pointGoal,
       timezone: next.settings.timezone,
-    });
+    }));
+    if (reply.denied) delivered = false;
   }
+  return delivered;
+}
+
+async function resetToday(next, request, actor, now) {
+  const { date } = zonedCalendar(now, next.settings.timezone);
+  delete next.completions[date];
+  delete next.goals[date];
+  if (await sendDayLow(next, request, date)) next.settings.rolledOn = date;
   return { status: 200, state: next, body: todayBody(next, actor, now) };
 }
 

@@ -13,7 +13,7 @@
   "goal.toast": "Today's goal is reached!",
   "error.loadTitle": "Kids Chores could not be loaded",
   "error.retry": "Try again",
-  "hint.midnight": "Chores reset after midnight in the time zone below. Completed chores leave the overview until then.",
+  "hint.midnight": "Chores reset after midnight in the time zone below, for everyone. The reward webhook changes from yes to no.",
   "hint.local": "Chores stay in this browser. The service beside Yuvomi is what makes the same account see them on a PC and an iPad.",
   "hint.testNeedsService": "The test needs the server service.",
   "settings.displayTitle": "Display title",

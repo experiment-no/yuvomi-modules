@@ -13,7 +13,7 @@
   "goal.toast": "Dagens mål er nådd!",
   "error.loadTitle": "Kids Chores kunne ikke lastes",
   "error.retry": "Prøv igjen",
-  "hint.midnight": "Oppgavene nullstilles etter midnatt i tidssonen under. Fullførte oppgaver forsvinner fra oversikten til da.",
+  "hint.midnight": "Oppgavene nullstilles etter midnatt i tidssonen under, for alle. Webhook for belønning settes da fra ja til nei.",
   "hint.local": "Oppgavene ligger bare i denne nettleseren. Tjenesten ved siden av Yuvomi gjør at samme konto ser dem på PC og iPad.",
   "hint.testNeedsService": "Testen trenger tjenesten på serveren.",
   "settings.displayTitle": "Visningstittel",

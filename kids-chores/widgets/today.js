@@ -1,6 +1,7 @@
 import { t } from '/i18n.js';
 
 import { choresApi, moduleDisplayTitle } from '../browser.js';
+import { msUntilNextDate } from '../lib/logic.js';
 import { loadMembers, memberName } from '../lib/members.js';
 import { STYLE_HREF, boardSignature, ensureStyle, errorBody, listen, progressMark, showEmpty, showToast, tr, watchAdmin } from '../lib/ui.js';
 
@@ -61,6 +62,7 @@ function applyAccent(container) {
 
 function draw(container, data, signal, token) {
   container._kcSig = boardSignature(data);
+  armMidnight(container, signal, token, data?.settings?.timezone);
   const settings = data?.settings && typeof data.settings === 'object' ? data.settings : {};
   const items = Array.isArray(data?.items) ? data.items : [];
   const open = Array.isArray(data?.open) ? data.open : items.filter((item) => item && !item.done && !item.locked);
@@ -94,6 +96,32 @@ function draw(container, data, signal, token) {
   for (const board of boards) body.append(widgetBoard(board, view, signal, token, container));
   container.replaceChildren(header(view, signal), body);
   window.lucide?.createIcons({ el: container });
+}
+
+function armMidnight(container, signal, token, timezone) {
+  clearTimeout(container._kcMidnight);
+  const delay = msUntilNextDate(new Date(), timezone || 'Europe/Oslo');
+  container._kcMidnight = setTimeout(() => {
+    if (signal?.aborted || container._kcToken !== token) return;
+    void refreshToday(container, signal, token);
+  }, delay);
+  if (signal && !container._kcMidnightAbort) {
+    container._kcMidnightAbort = true;
+    signal.addEventListener('abort', () => clearTimeout(container._kcMidnight), { once: true });
+  }
+}
+
+async function refreshToday(container, signal, token) {
+  try {
+    const next = await choresApi('/today', { signal });
+    if (signal?.aborted || container._kcToken !== token) return;
+    next.members = container._kcMembers;
+    draw(container, next, signal, token);
+  } catch (err) {
+    if (err?.name !== 'AbortError' && !signal?.aborted && container._kcToken === token) {
+      armMidnight(container, signal, token, 'Europe/Oslo');
+    }
+  }
 }
 
 function widgetBoard(board, view, signal, token, container) {
