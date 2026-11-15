@@ -79,6 +79,7 @@ function settingsForm(data, signal, token, container) {
   const goal = input(String(settings.pointGoal), 'text');
   goal.inputMode = 'numeric';
   const congrats = input(settings.congratsMessage, 'text');
+  congrats.placeholder = tr('page.congrats');
   const webhook = input(settings.webhookUrl || '', 'url');
   webhook.spellcheck = false;
   webhook.autocomplete = 'off';

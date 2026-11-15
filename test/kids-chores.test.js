@@ -551,6 +551,7 @@ test('the overview catalog gets a Kids Chores widget', () => {
   for (const locale of ['en', 'nb']) {
     const strings = JSON.parse(fs.readFileSync(new URL(`../kids-chores/locales/${locale}.json`, import.meta.url), 'utf8'));
     assert.equal(strings['widgets.today'], 'Kids Chores');
+    if (locale === 'nb') assert.equal(strings['page.congrats'], 'Alt ferdig i dag — Bra jobba!');
   }
 });
 
