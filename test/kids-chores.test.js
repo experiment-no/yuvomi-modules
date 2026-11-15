@@ -8,6 +8,7 @@ import test from 'node:test';
 import { register } from 'node:module';
 
 import { createClient, KidsChoresError } from '../kids-chores/lib/client.js';
+import { postWebhook } from '../kids-chores/lib/webhook.js';
 import {
   PREFIX,
   PROGRESS_ICONS,
@@ -363,6 +364,43 @@ function memoryStorage() {
     removeItem: (key) => store.delete(key),
   };
 }
+
+test('a Homey call that never leaves does not mark the chore done', async () => {
+  let state = defaultState();
+  const created = await ask(state, 'POST', '/chores', {
+    title: 'Ella',
+    points: 1,
+    days: [1, 2, 3, 4, 5, 6, 7],
+    webhookUrl: 'https://webhooks.athom.com/webhook/abc?homey=HOMEYID&event=ella_checkin',
+  });
+  state = created.state;
+  const hooks = calls();
+  hooks.post = async () => {
+    throw new TypeError('Failed to fetch');
+  };
+  const blocked = await ask(state, 'POST', '/complete', { id: created.body.chore.id }, admin, hooks);
+  assert.equal(blocked.status, 409);
+  assert.equal(blocked.body.reason, 'webhook_denied');
+  assert.equal(Object.keys(blocked.state.completions).length, 0);
+
+  const previous = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new TypeError('Failed to fetch');
+  };
+  try {
+    await assert.rejects(
+      () => postWebhook('https://webhooks.athom.com/webhook/abc?homey=HOMEYID&event=ella_checkin', {
+        event: 'ella_checkin',
+        state: 'yes',
+        done: true,
+        points: 1,
+      }),
+      (err) => err instanceof TypeError,
+    );
+  } finally {
+    globalThis.fetch = previous;
+  }
+});
 
 test('the browser falls back only when the service is absent', async () => {
   const storage = memoryStorage();

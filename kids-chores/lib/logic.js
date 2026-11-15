@@ -531,7 +531,7 @@ async function callWebhook(postWebhook, url, payload) {
     if (isAthomWebhook(url)) return { denied: explicitWebhookDenial(result?.body) };
     return { denied: webhookDenied(result?.status, result?.body) };
   } catch {
-    return { denied: !isAthomWebhook(url) };
+    return { denied: true };
   }
 }
 

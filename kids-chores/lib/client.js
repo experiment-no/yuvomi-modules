@@ -42,20 +42,46 @@ function writeState(state) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-async function localRequest(method, path, body, signal) {
-  if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-  const state = readState();
-  const result = await handle(state, {
-    method,
-    path,
-    body,
-    now: new Date(),
-    actor: localActor(),
-    postWebhook: (url, payload) => postWebhook(url, payload, signal),
-  });
-  if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-  if (result.status < 400) writeState(result.state);
-  return result;
+/**
+ * Yuvomi's page may only call its own origin. A Homey address is refused
+ * by the browser before the POST exists, which used to look like a finished
+ * chore with no trigger. Ask Yuvomi to POST the same JSON, then drop the
+ * temporary channel.
+ */
+async function relayWebhook(url, payload) {
+  if (typeof document === 'undefined') return false;
+  let notifications;
+  try {
+    ({ notifications } = await import('/api.js'));
+  } catch {
+    return false;
+  }
+  let id;
+  try {
+    const created = await notifications.createChannel({
+      provider: 'webhook',
+      name: 'Kids Chores',
+      enabled: true,
+      config: {
+        baseUrl: url,
+        payloadTemplate: JSON.stringify(payload),
+      },
+    });
+    id = created?.data?.id ?? created?.id;
+    if (!id) return false;
+    await notifications.testChannel(id);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (id) {
+      try {
+        await notifications.deleteChannel(id);
+      } catch {
+        try { await notifications.updateChannel(id, { enabled: false }); } catch { /* A leftover channel must not keep calling Homey. */ }
+      }
+    }
+  }
 }
 
 function parseJson(text) {
@@ -75,6 +101,32 @@ function isAbsent(status, body) {
 
 export function createClient() {
   let csrfToken = '';
+
+  async function deliverWebhook(url, payload, signal) {
+    try {
+      return await postWebhook(url, payload, signal);
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      if (await relayWebhook(url, payload)) return { status: 204, body: '' };
+      throw err;
+    }
+  }
+
+  async function localRequest(method, path, body, signal) {
+    if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+    const state = readState();
+    const result = await handle(state, {
+      method,
+      path,
+      body,
+      now: new Date(),
+      actor: localActor(),
+      postWebhook: (url, payload) => deliverWebhook(url, payload, signal),
+    });
+    if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+    if (result.status < 400) writeState(result.state);
+    return result;
+  }
 
   async function remote(method, path, body, signal, retry) {
     const headers = { accept: 'application/json' };
