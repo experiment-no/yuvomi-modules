@@ -6,24 +6,20 @@ Third-party modules for [Yuvomi](https://github.com/ulsklyc/yuvomi).
 
 ### Kids Chores
 
-A household chore and reward management module that integrates Yuvomi with external automation platforms such as Homey.
+A household chore and reward management module designed to support external automation and reward systems.
 
 Features:
 - Manage household chores and track completed tasks.
 - Send webhook events when tasks are completed.
-- Integrate with Homey and other webhook-compatible services.
+- Integrate with external webhook-compatible services.
 - Support external point systems and configurable reward rules.
-- Trigger rewards such as additional screen time or other Homey-connected features.
+- Enable rewards such as additional screen time or other connected services and devices.
 
-### Homey Integration
+### External Integrations such as Homey and Home Assistant
 
-Kids Chores is designed to communicate with Homey through webhooks. Homey handles the automation logic, point system, reward conditions, and execution of rewards.
+Kids Chores is designed to communicate with external services through webhooks. This allows users to connect their own automation platforms and implement custom rules, point systems, and reward mechanisms.
 
-Typical workflow:
-1. A child completes a chore in Yuvomi.
-2. Yuvomi sends a webhook event to Homey.
-3. Homey evaluates the completed task against its configured rules and point system.
-4. When reward conditions are met, Homey triggers the corresponding action, such as unlocking additional screen time.
+For example, an automation platform such as Homey could receive task completion events, evaluate reward conditions, and trigger actions such as unlocking additional screen time or other connected features.
 
 ### Installation
 
@@ -32,7 +28,3 @@ Typical workflow:
 3. Ensure `module.json` is located at the root of the ZIP archive.
 4. In Yuvomi, navigate to **Settings → Modules → Add custom module**.
 5. Upload the ZIP archive.
-
----
-
-More modules and integrations may be added over time.
