@@ -1,5 +1,6 @@
 import { weatherApi } from '../browser.js';
 import {
+  graphFromDays,
   graphHours,
   symbolIcon,
   symbolKey,
@@ -13,7 +14,6 @@ import {
   errorBody,
   graphFrame,
   icon,
-  listen,
   locale,
   paintIcons,
   showEmpty,
@@ -59,24 +59,39 @@ export async function renderWidget(container, context = {}) {
 }
 
 export function showWidget(container, data, options = {}) {
-  const signal = options.signal;
   container.style.setProperty('--seal-accent', ACCENT);
   container.style.setProperty('--widget-accent', ACCENT);
-  const open = Boolean(container._mwOpen) && Boolean(data?.hours?.length);
-  container.replaceChildren(header(signal, options.reload), body(container, data, signal, open));
-  fitTile(container, open);
+  const open = Boolean(container._mwOpen) && chartPoints(data).length > 1;
+  container.replaceChildren(header(options.reload), body(container, data, open));
+  fitTile(container);
   paintIcons(container);
 }
 
-function fitTile(container, expanded) {
-  const wrapper = container.closest?.('.widget-wrapper');
-  if (!wrapper) return;
-  wrapper.style.setProperty('--tile-rows', expanded ? '172' : '78');
+function chartPoints(data) {
+  const hours = graphHours(data?.hours);
+  if (hours.length > 1) return hours;
+  return graphFromDays(data?.days);
 }
 
-function header(signal, reload) {
+function fitTile(container) {
+  const wrapper = container.closest?.('.widget-wrapper');
+  if (!wrapper) return;
+  const measure = () => {
+    const header = container.querySelector('.widget__header')?.offsetHeight || 0;
+    const strip = container.querySelector('.mw-strip')?.offsetHeight || 0;
+    const graph = container.querySelector('.mw-graph');
+    const extra = graph && !graph.hidden ? graph.offsetHeight + 12 : 0;
+    if (!header && !strip) return;
+    const rows = Math.ceil((header + strip + extra + 16) / 4);
+    wrapper.style.setProperty('--tile-rows', String(Math.max(1, rows)));
+  };
+  measure();
+  requestAnimationFrame(measure);
+}
+
+function header(reload) {
   const bar = document.createElement('div');
-  bar.className = 'widget__header';
+  bar.className = 'widget__header mw-head';
   const title = document.createElement('h3');
   title.className = 'widget__title';
   const seal = document.createElement('span');
@@ -93,15 +108,15 @@ function header(signal, reload) {
   refresh.setAttribute('aria-label', tr('widget.refresh'));
   refresh.title = tr('widget.refresh');
   refresh.append(icon('refresh-cw'));
-  listen(refresh, 'click', (event) => {
+  refresh.addEventListener('click', (event) => {
     event.stopPropagation();
     if (typeof reload === 'function') reload();
-  }, signal);
+  });
   bar.append(title, refresh);
   return bar;
 }
 
-function body(container, data, signal, open) {
+function body(container, data, open) {
   const wrap = document.createElement('div');
   wrap.className = 'widget__body mw-widget';
   if (!data?.configured || !data.current) {
@@ -111,30 +126,27 @@ function body(container, data, signal, open) {
     wrap.append(empty);
     return wrap;
   }
-  const hours = Array.isArray(data.hours) ? data.hours : [];
-  const face = document.createElement(hours.length ? 'button' : 'div');
+  const points = chartPoints(data);
+  const face = document.createElement(points.length > 1 ? 'button' : 'div');
   face.className = 'mw-face';
-  if (hours.length) {
-    face.type = 'button';
-    face.setAttribute('aria-expanded', open ? 'true' : 'false');
-    face.setAttribute('aria-controls', 'mw-widget-graph');
-  }
   face.append(strip(data, locale()));
   wrap.append(face);
-  if (hours.length) {
-    const graph = graphFrame(graphHours(hours), locale(), { updated: data.updated });
-    graph.id = 'mw-widget-graph';
-    graph.hidden = !open;
-    listen(face, 'click', () => {
-      const next = face.getAttribute('aria-expanded') !== 'true';
-      face.setAttribute('aria-expanded', next ? 'true' : 'false');
-      graph.hidden = !next;
-      container._mwOpen = next;
-      fitTile(container, next);
-      paintIcons(graph);
-    }, signal);
-    wrap.append(graph);
-  }
+  if (points.length < 2) return wrap;
+  face.type = 'button';
+  face.setAttribute('aria-expanded', open ? 'true' : 'false');
+  face.setAttribute('aria-controls', 'mw-widget-graph');
+  const graph = graphFrame(points, locale(), { updated: data.updated });
+  graph.id = 'mw-widget-graph';
+  graph.hidden = !open;
+  face.addEventListener('click', () => {
+    const next = face.getAttribute('aria-expanded') !== 'true';
+    face.setAttribute('aria-expanded', next ? 'true' : 'false');
+    graph.hidden = !next;
+    container._mwOpen = next;
+    fitTile(container);
+    if (next) paintIcons(graph);
+  });
+  wrap.append(graph);
   return wrap;
 }
 
