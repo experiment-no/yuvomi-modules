@@ -25,7 +25,7 @@
   "settings.notifyAdmin": "Record in points history when the goal is reached",
   "settings.showOnWall": "Show on wall",
   "settings.share": "Sync across users",
-  "settings.shareHint": "On: chores are stored for the household. A generic chore shows for everyone. A chore linked to a child shows only for that child, and you follow the people you check below. Off: each member keeps a separate list. The same account still syncs across a PC and an iPad.",
+  "settings.shareHint": "On: chores are stored for the household. A generic chore shows for everyone. A chore linked to a child shows only for that child, and you follow the people you check below. Off: each member keeps a separate list. The same account still syncs across a PC and an iPad. Without a separate service, the list is kept in the note Kids Chores, which the whole household can read.",
   "settings.shareOff": "Sync across users is off. This list belongs to the signed-in account.",
   "settings.follow": "I follow",
   "settings.followHint": "Check which children's chores you want to see, in addition to the generic ones.",
@@ -96,5 +96,7 @@
   "reasons.webhook": "The webhook URL could not be used.",
   "reasons.webhook_denied": "The webhook did not allow this.",
   "reasons.locked": "Finish the chores above this one first.",
-  "reasons.upstream": "The household session could not be checked."
+  "reasons.upstream": "The household session could not be checked.",
+  "reasons.notes": "Kids Chores could not read or save the household note.",
+  "reasons.too_large": "The chore list is too big to share in a note. Shorten the webhook addresses or remove chores."
 }

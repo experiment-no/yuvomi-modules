@@ -1,9 +1,12 @@
 /**
  * Talks to /api/extensions/kids-chores. When that service is not there
  * (network error, 404/502/503, or an error body with no reason), the same
- * calls run against localStorage. A real 401/403 from the service is shown.
+ * calls use a household note every signed-in member can read. localStorage
+ * is only the last resort, and it stays on this browser. A real 401/403
+ * from the service is shown.
  */
 
+import { HouseholdError, actorFromMe, runHousehold } from './household.js';
 import { PREFIX, commit, handle, openDocument, project } from './logic.js';
 import { postWebhook } from './webhook.js';
 
@@ -103,7 +106,9 @@ function isAbsent(status, body) {
   return false;
 }
 
-export function createClient() {
+export function createClient(options = {}) {
+  const loadApi = options.loadApi || (() => import('/api.js'));
+  const clock = options.now || (() => new Date());
   let csrfToken = '';
   let seeded = false;
 
@@ -125,7 +130,7 @@ export function createClient() {
       method,
       path,
       body,
-      now: new Date(),
+      now: clock(),
       actor,
       postWebhook: (url, payload) => deliverWebhook(url, payload, signal),
     });
@@ -195,11 +200,54 @@ export function createClient() {
     }
     const live = await remote(method, path, body, signal, false);
     if (live) return live;
+    const shared = await householdRequest(method, path, body, signal);
+    if (shared) return shared;
     const local = await localRequest(method, path, body, signal);
     if (local.status >= 400) {
       throw new KidsChoresError(local.body.reason || 'internal', local.status, local.body.error);
     }
     return local.body;
+  }
+
+  async function householdRequest(method, path, body, signal) {
+    let api;
+    try {
+      ({ api } = await loadApi());
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      return null;
+    }
+    if (!api || typeof api.get !== 'function') return null;
+    try {
+      const actor = actorFromMe(await api.get('/auth/me', { signal }));
+      if (!actor) return null;
+      const result = await runHousehold({
+        api,
+        method,
+        path,
+        body,
+        signal,
+        actor,
+        now: clock(),
+        postWebhook: (url, payload) => deliverWebhook(url, payload, signal),
+        readLocal: readDocument,
+        writeLocal: writeDocument,
+      });
+      if (result.status >= 400) {
+        throw new KidsChoresError(result.body?.reason || 'internal', result.status, result.body?.error);
+      }
+      return result.body;
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      if (err instanceof KidsChoresError) throw err;
+      if (err instanceof HouseholdError) throw new KidsChoresError(err.reason, err.status, err.message);
+      const status = Number(err?.status) || 0;
+      if (status === 401) throw new KidsChoresError('auth', status, err.message);
+      if (status === 403) throw new KidsChoresError('forbidden', status, err.message);
+      if (status === 404) return null;
+      if (status) throw new KidsChoresError('notes', status, err.message);
+      return null;
+    }
   }
 
   return {

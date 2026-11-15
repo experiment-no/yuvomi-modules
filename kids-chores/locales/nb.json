@@ -25,7 +25,7 @@
   "settings.notifyAdmin": "Før inn i poenghistorikken når målet er nådd",
   "settings.showOnWall": "Vis på veggen",
   "settings.share": "Synkroniser mellom brukere",
-  "settings.shareHint": "På: oppgavene ligger hos husstanden. En generell oppgave vises for alle. En oppgave knyttet til et barn vises bare for det barnet, og du følger de du huker av under. Av: hvert medlem har sin egen liste. Samme konto synkroniseres mellom PC og iPad uansett.",
+  "settings.shareHint": "På: oppgavene ligger hos husstanden. En generell oppgave vises for alle. En oppgave knyttet til et barn vises bare for det barnet, og du følger de du huker av under. Av: hvert medlem har sin egen liste. Samme konto synkroniseres mellom PC og iPad uansett. Uten egen tjeneste ligger listen i notatet Kids Chores, som hele husstanden kan lese.",
   "settings.shareOff": "Synkronisering mellom brukere er av. Denne listen gjelder kontoen som er logget inn.",
   "settings.follow": "Jeg følger",
   "settings.followHint": "Huk av hvilke barns oppgaver du vil se, i tillegg til de generelle.",
@@ -96,5 +96,7 @@
   "reasons.webhook": "Webhook-adressen kunne ikke brukes.",
   "reasons.webhook_denied": "Webhooken tillot ikke dette.",
   "reasons.locked": "Fullfør oppgavene over denne først.",
-  "reasons.upstream": "Husstandens økt kunne ikke sjekkes."
+  "reasons.upstream": "Husstandens økt kunne ikke sjekkes.",
+  "reasons.notes": "Kids Chores kunne ikke lese eller lagre husstandens notat.",
+  "reasons.too_large": "Oppgavelisten er for stor til å deles i et notat. Kort ned webhook-adressene eller fjern oppgaver."
 }
