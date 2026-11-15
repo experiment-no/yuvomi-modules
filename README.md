@@ -17,7 +17,7 @@ Features:
 
 ### Weather
 
-Weather data from the Norwegian Meteorological Institute. The overview tile shows the current weather and the next four days, and a click expands the graph there. The page lists eight or more days, and a day opens into its hours. With no extra service, the page asks Open-Meteo for those hours and otherwise uses the weather Yuvomi already fetches. Place search stays inside Norway. The page is available in Norwegian and English.
+Weather data from the Norwegian Meteorological Institute. The overview tile shows the current weather, the next four days and the graph together. The page lists eight or more days, and a day opens into its hours. With no extra service, the page asks Open-Meteo for those hours and otherwise uses the weather Yuvomi already fetches. Place search stays inside Norway. The page is available in Norwegian and English.
 
 ### External Integrations such as Homey and Home Assistant
 

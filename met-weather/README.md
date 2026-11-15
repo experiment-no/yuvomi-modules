@@ -1,6 +1,6 @@
 # Weather
 
-Weather data from the Norwegian Meteorological Institute, on a page for Yuvomi. The overview tile shows the weather at once: the temperature now, and the next four days. A click on the tile opens the graph in the tile. It does not leave the overview.
+Weather data from the Norwegian Meteorological Institute, on a page for Yuvomi. The overview tile shows the weather at once: the temperature now, the next four days, and the graph. It does not leave the overview.
 
 Install the folder as a custom module. Yuvomi does not run anything in this folder, and the page cannot call MET itself. Opening the page still works: it reads the forecast Yuvomi already fetches for the household. Pick a place in Norway under Settings, and that place is saved as the household weather location.
 
@@ -44,4 +44,4 @@ location /api/extensions/met-weather/ {
 }
 ```
 
-The overview lists this tile as Weather, or Vær when the language is Norwegian. It is on by default, as tall as the other single-row tiles, and wider so the four days fit. The tile file is `widgets/forecast.js` (`renderWidget`). The weather is visible before a click. A click expands the graph in the tile: temperature, precipitation, wind, gust and the direction the wind is blowing. The page at `/m/met-weather` lists each day on its own row (eight or more when the forecast has them): night, morning, afternoon and evening, high and low, precipitation and wind. A row opens that day. When the hours are available it lists all twenty-four.
+The overview lists this tile as Weather, or Vær when the language is Norwegian. It is on by default, wider so the four days fit, and tall enough for the graph. The tile file is `widgets/forecast.js` (`renderWidget`). The temperature, the next four days and the graph are visible together: temperature, precipitation, wind, gust and the direction the wind is blowing. The graph uses the same surface, text and chart colours as the rest of Yuvomi. The page at `/m/met-weather` lists each day on its own row (eight or more when the forecast has them): night, morning, afternoon and evening, high and low, precipitation and wind. A row opens that day. When the hours are available it lists all twenty-four.

@@ -679,15 +679,16 @@ test('the sidecar answer is used when the service is there', async () => {
 test('the manifest and both languages describe the same weather module', () => {
   const manifest = JSON.parse(fs.readFileSync(new URL('../met-weather/module.json', import.meta.url), 'utf8'));
   assert.equal(manifest.id, 'met-weather');
-  assert.equal(manifest.version, '1.2.1');
+  assert.equal(manifest.version, '1.2.2');
   assert.equal(manifest.description, 'Værdata fra Norsk meteorologisk institutt');
   assert.equal(manifest.settings.labelKey, 'settings.title');
   assert.equal(manifest.capabilities.api.prefix, '/api/extensions/met-weather');
   assert.equal(manifest.capabilities.widgets[0].entry, 'widgets/forecast.js');
   assert.equal(manifest.capabilities.widgets[0].defaultVisible, true);
-  assert.equal(manifest.capabilities.widgets[0].defaultSize, '4x1');
+  assert.equal(manifest.capabilities.widgets[0].defaultSize, '4x4');
   const widget = fs.readFileSync(new URL('../met-weather/widgets/forecast.js', import.meta.url), 'utf8');
   assert.equal(widget.includes('yuvomi.navigate'), false);
+  assert.equal(widget.includes('graph.hidden'), false);
   assert.equal(widget.includes('/m/met-weather'), false);
   const english = JSON.parse(fs.readFileSync(new URL('../met-weather/locales/en.json', import.meta.url), 'utf8'));
   const norwegian = JSON.parse(fs.readFileSync(new URL('../met-weather/locales/nb.json', import.meta.url), 'utf8'));
