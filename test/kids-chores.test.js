@@ -14,6 +14,8 @@ import {
   defaultState,
   handle,
   shouldShowOnWall,
+  webhookDenied,
+  webhookEvent,
   zonedCalendar,
 } from '../kids-chores/lib/logic.js';
 import { createServer } from '../kids-chores/service/server.js';
@@ -146,6 +148,26 @@ test('settings keep the previous timezone and only accept sun or star', async ()
   assert.equal(cleared.state.settings.pointGoal, 4);
 });
 
+test('a Homey address keeps its event name when the chore is completed', async () => {
+  let state = defaultState();
+  const created = await ask(state, 'POST', '/chores', {
+    title: 'ella_checkin',
+    points: 1,
+    days: [5],
+    webhookUrl: 'https://webhooks.athom.com/webhook/abc?homey=HOMEYID&event=ella_checkin',
+  });
+  state = created.state;
+  const hooks = calls();
+  hooks.rule = { status: 200, body: 'ok' };
+  const done = await ask(state, 'POST', '/complete', { id: created.body.chore.id }, admin, hooks);
+  assert.equal(done.status, 200);
+  assert.equal(done.body.open.length, 0);
+  assert.equal(hooks.log[0].payload.event, 'ella_checkin');
+  assert.equal(hooks.log[0].payload.state, 'yes');
+  assert.equal(hooks.log[0].payload.done, true);
+  assert.equal(hooks.log[0].payload.points, 1);
+});
+
 test('chore rules: limit, reorder, day, lock, webhook, goal once, reset, prune', async () => {
   let state = defaultState();
   state.settings.pointGoal = 5;
@@ -202,6 +224,10 @@ test('chore rules: limit, reorder, day, lock, webhook, goal once, reset, prune',
   assert.equal(denied.body.reason, 'webhook_denied');
   assert.equal(hooks.log[0].payload.event, 'kids_chores.chore_completed');
   assert.equal(hooks.log[0].payload.state, 'yes');
+  assert.equal(webhookDenied(200, 'ok'), false);
+  assert.equal(webhookDenied(200, 'OK'), false);
+  assert.equal(webhookDenied(404, 'Webhook Not Found'), true);
+  assert.equal(webhookEvent('https://webhooks.athom.com/webhook/abc?homey=HOMEYID&event=ella_checkin', 'kids_chores.chore_completed'), 'ella_checkin');
   assert.equal(Object.keys(denied.state.completions).length, 0);
 
   hooks.log.length = 0;
