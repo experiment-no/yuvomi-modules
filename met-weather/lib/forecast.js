@@ -114,7 +114,7 @@ function windMs(speed, units) {
   return value / 3.6;
 }
 
-function hostDay(day) {
+function hostDay(day, units) {
   if (!day || typeof day.date !== 'string') return null;
   const low = Number(day.temp_min);
   const high = Number(day.temp_max);
@@ -123,6 +123,9 @@ function hostDay(day) {
     low: Number.isFinite(low) ? low : null,
     high: Number.isFinite(high) ? high : null,
     symbol: symbolFromWmo(day.desc, day.icon),
+    wind: windMs(day.wind_speed, units),
+    gust: windMs(day.wind_gust, units),
+    direction: finiteOrNull(day.wind_direction),
   };
 }
 
@@ -138,7 +141,9 @@ export function forecastFromHost(payload) {
   const data = payload.data;
   const temp = Number(data.current?.temp);
   if (!Number.isFinite(temp)) return empty;
-  const days = [hostDay(data.today), ...(Array.isArray(data.forecast) ? data.forecast.map(hostDay) : [])].filter(Boolean);
+  const days = [hostDay(data.today, data.units), ...(Array.isArray(data.forecast) ? data.forecast.map((day) => hostDay(day, data.units)) : [])].filter(Boolean);
+  const wind = windMs(data.current.wind_speed, data.units);
+  if (days[0] && days[0].wind == null && wind != null) days[0].wind = wind;
   return {
     configured: true,
     source: 'host',
@@ -178,6 +183,7 @@ export function formatNumber(value, digits = 1) {
 }
 
 function finiteOrNull(value) {
+  if (value == null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }

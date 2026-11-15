@@ -237,6 +237,8 @@ test('Open-Meteo hours become the same day rows', () => {
   assert.equal(line[0].temp, 9);
   assert.equal(line[1].temp, 7);
   assert.equal(line[0].symbol, 'cloudy');
+  assert.ok(Math.abs(line[0].wind - 5) < 0.05);
+  assert.equal(line[1].wind, null);
 });
 
 test('place search keeps Kartverket hits inside Norway and shortens the county', () => {
@@ -525,6 +527,8 @@ test('Yuvomi weather becomes a day view in metres per second', () => {
   assert.equal(view.current.temp, 8);
   assert.equal(view.current.symbol, 'cloudy');
   assert.ok(Math.abs(view.current.wind - 5) < 0.05);
+  assert.ok(Math.abs(view.days[0].wind - 5) < 0.05);
+  assert.equal(view.days[1].wind, null);
   assert.equal(view.days[1].symbol, 'rain');
   assert.equal(symbolFromWmo('wmo.0', 'moon'), 'clearsky_night');
   assert.equal(forecastFromHost({ data: null, reason: 'not_configured' }).configured, false);
@@ -679,7 +683,7 @@ test('the sidecar answer is used when the service is there', async () => {
 test('the manifest and both languages describe the same weather module', () => {
   const manifest = JSON.parse(fs.readFileSync(new URL('../met-weather/module.json', import.meta.url), 'utf8'));
   assert.equal(manifest.id, 'met-weather');
-  assert.equal(manifest.version, '1.2.2');
+  assert.equal(manifest.version, '1.2.3');
   assert.equal(manifest.description, 'Værdata fra Norsk meteorologisk institutt');
   assert.equal(manifest.settings.labelKey, 'settings.title');
   assert.equal(manifest.capabilities.api.prefix, '/api/extensions/met-weather');

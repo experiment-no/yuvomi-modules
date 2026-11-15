@@ -318,6 +318,12 @@ div.mw-face {
   font-weight: 650;
 }
 
+.mw-daycol__wind {
+  color: var(--color-text-secondary, inherit);
+  font-size: 0.72rem;
+  line-height: 1.1;
+}
+
 .mw-span {
   position: relative;
   width: 100%;
@@ -419,6 +425,15 @@ div.mw-face {
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
+}
+
+.mw-graph__wind-dot {
+  fill: var(--chart-series-1, #4F4DC9);
+}
+
+.mw-graph__wind-label {
+  fill: var(--chart-series-1, #4F4DC9);
+  font-size: 11px;
 }
 
 .mw-graph__gust {
