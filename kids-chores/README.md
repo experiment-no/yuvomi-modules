@@ -38,4 +38,6 @@ location /api/extensions/kids-chores/ {
 }
 ```
 
-`showOnWall` and `notifyAdmin` are stored with the household settings. Stock Yuvomi does not draw a wall panel for this module, and this folder does not patch the dashboard.
+The overview tile is `widgets/today.js` (`renderWidget`). The today sheet on the overview loads the same day through `browser.js` (`choresApi('/today')`) and completes a chore with `choresApi('/complete')`. This folder does not patch the dashboard; those calls are already in the overview.
+
+`showOnWall` and `notifyAdmin` are stored with the household settings. `wall.js` exports `renderWallPanel` for an overview that already mounts it. The panel stays empty until show on wall is on and today has a scheduled chore. Stock Yuvomi does not mount that panel.

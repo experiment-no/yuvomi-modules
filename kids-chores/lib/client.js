@@ -123,6 +123,12 @@ export function createClient() {
   }
 
   return {
+    adoptCsrf(token) {
+      if (typeof token === 'string' && token && token !== 'local') csrfToken = token;
+    },
+    call(method, path, body, signal) {
+      return request(method, path, body, signal);
+    },
     today(signal) {
       return request('GET', '/today', undefined, signal);
     },

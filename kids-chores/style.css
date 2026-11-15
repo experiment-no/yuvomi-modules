@@ -79,8 +79,9 @@ button.kc-chore:focus-visible {
 .kc-widget {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  gap: 0.6rem;
   min-height: 0;
+  min-width: 0;
 }
 
 .kc-widget__body {
@@ -218,4 +219,43 @@ button.kc-chore:focus-visible {
 
 .kc-editor {
   padding-top: 0.4rem;
+}
+
+.kc-wall {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.kc-wall__progress,
+.kc-wall__chore {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.kc-wall__score {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.kc-wall__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+button.kc-wall__chore {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
 }
