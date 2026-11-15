@@ -35,6 +35,7 @@ export function defaultSettings() {
     showOnWall: false,
     timezone: 'Europe/Oslo',
     progressIcon: 'sun',
+    shareAcrossUsers: true,
   };
 }
 
@@ -104,6 +105,7 @@ function cloneChore(chore) {
     requireAboveDone: Boolean(chore.requireAboveDone),
     webhookUrl: chore.webhookUrl || null,
     resetWebhookUrl: chore.resetWebhookUrl || null,
+    excludedMemberIds: cleanMemberIds(chore.excludedMemberIds),
   };
 }
 
@@ -121,6 +123,7 @@ export function normalizeState(raw) {
     showOnWall: settings.showOnWall === true,
     timezone: isValidTimeZone(settings.timezone) ? settings.timezone : 'Europe/Oslo',
     progressIcon: isProgressIcon(settings.progressIcon) ? settings.progressIcon : 'sun',
+    shareAcrossUsers: settings.shareAcrossUsers !== false,
   };
   if (Array.isArray(raw.chores)) {
     state.chores = raw.chores.slice(0, MAX_CHORES).map((chore, index) => normalizeChore(chore, index)).filter(Boolean);
@@ -131,10 +134,22 @@ export function normalizeState(raw) {
       const day = {};
       for (const [id, entry] of Object.entries(map)) {
         if (!entry || typeof entry !== 'object') continue;
-        day[id] = {
-          at: typeof entry.at === 'string' ? entry.at : new Date(0).toISOString(),
-          by: typeof entry.by === 'string' ? entry.by.slice(0, 80) : '',
-        };
+        if (typeof entry.at === 'string') {
+          day[id] = {
+            at: entry.at,
+            by: typeof entry.by === 'string' ? entry.by.slice(0, 80) : '',
+          };
+          continue;
+        }
+        const people = {};
+        for (const [userId, row] of Object.entries(entry)) {
+          if (!/^[A-Za-z0-9_-]{1,80}$/.test(userId) || !row || typeof row !== 'object' || typeof row.at !== 'string') continue;
+          people[userId] = {
+            at: row.at,
+            by: typeof row.by === 'string' ? row.by.slice(0, 80) : '',
+          };
+        }
+        if (Object.keys(people).length) day[id] = people;
       }
       state.completions[date] = day;
     }
@@ -142,11 +157,25 @@ export function normalizeState(raw) {
   if (raw.goals && typeof raw.goals === 'object') {
     for (const [date, entry] of Object.entries(raw.goals)) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !entry || typeof entry !== 'object') continue;
-      state.goals[date] = {
-        at: typeof entry.at === 'string' ? entry.at : '',
-        earned: Number.isFinite(entry.earned) ? entry.earned : 0,
-        notified: entry.notified === true,
-      };
+      if (typeof entry.at === 'string' || typeof entry.notified === 'boolean') {
+        state.goals[date] = {
+          at: typeof entry.at === 'string' ? entry.at : '',
+          earned: Number.isFinite(entry.earned) ? entry.earned : 0,
+          notified: entry.notified === true,
+        };
+        continue;
+      }
+      const people = {};
+      for (const [userId, row] of Object.entries(entry)) {
+        if (!/^[A-Za-z0-9_-]{1,80}$/.test(userId) || !row || typeof row !== 'object') continue;
+        if (typeof row.at !== 'string' && typeof row.notified !== 'boolean') continue;
+        people[userId] = {
+          at: typeof row.at === 'string' ? row.at : '',
+          earned: Number.isFinite(row.earned) ? row.earned : 0,
+          notified: row.notified === true,
+        };
+      }
+      if (Object.keys(people).length) state.goals[date] = people;
     }
   }
   return state;
@@ -166,6 +195,7 @@ function normalizeChore(raw, index) {
     requireAboveDone: raw.requireAboveDone === true,
     webhookUrl: typeof raw.webhookUrl === 'string' && raw.webhookUrl ? raw.webhookUrl : null,
     resetWebhookUrl: typeof raw.resetWebhookUrl === 'string' && raw.resetWebhookUrl ? raw.resetWebhookUrl : null,
+    excludedMemberIds: cleanMemberIds(raw.excludedMemberIds),
   };
 }
 
@@ -188,6 +218,44 @@ function cleanDays(value) {
   return days;
 }
 
+function cleanMemberIds(value) {
+  if (!Array.isArray(value)) return [];
+  const ids = [];
+  for (const item of value) {
+    const id = String(item ?? '').trim();
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(id) || ids.includes(id)) continue;
+    ids.push(id);
+    if (ids.length >= 64) break;
+  }
+  return ids;
+}
+
+/** A completion stored as `{ at, by }` counts for every member. Newer rows are per user id. */
+export function doneFor(entry, userId) {
+  if (!entry || typeof entry !== 'object') return false;
+  if (typeof entry.at === 'string') return true;
+  const id = String(userId ?? '');
+  return Boolean(entry['*'] || (id && entry[id]));
+}
+
+export function choreIncludes(chore, settings, actor) {
+  if (settings?.shareAcrossUsers === false) return true;
+  const excluded = cleanMemberIds(chore?.excludedMemberIds);
+  if (!excluded.length || actor?.id == null || actor.id === '') return true;
+  return !excluded.includes(String(actor.id));
+}
+
+function isFlatGoal(entry) {
+  return Boolean(entry && (typeof entry.at === 'string' || typeof entry.notified === 'boolean'));
+}
+
+function goalNotified(entry, userId) {
+  if (!entry) return false;
+  if (isFlatGoal(entry)) return entry.notified !== false;
+  const id = String(userId ?? '');
+  return entry['*']?.notified === true || (id && entry[id]?.notified === true);
+}
+
 export function cloneState(state) {
   return normalizeState(JSON.parse(JSON.stringify(state)));
 }
@@ -201,6 +269,7 @@ export function publicSettings(settings, includeWebhook) {
     showOnWall: settings.showOnWall,
     timezone: settings.timezone,
     progressIcon: settings.progressIcon,
+    shareAcrossUsers: settings.shareAcrossUsers !== false,
   };
   if (includeWebhook) out.webhookUrl = settings.webhookUrl;
   return out;
@@ -212,17 +281,17 @@ export function shouldShowOnWall(data) {
   return Array.isArray(data.items) && data.items.length > 0;
 }
 
-export function buildToday(state, now = new Date()) {
+export function buildToday(state, now = new Date(), actor = null) {
   const { date, weekday } = zonedCalendar(now, state.settings.timezone);
   const doneMap = state.completions[date] || {};
   const scheduled = state.chores
-    .filter((chore) => chore.active && chore.days.includes(weekday))
+    .filter((chore) => chore.active && chore.days.includes(weekday) && choreIncludes(chore, state.settings, actor))
     .slice()
     .sort((a, b) => a.sort - b.sort || a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
 
   const items = scheduled.map((chore, index) => {
-    const done = Boolean(doneMap[chore.id]);
-    const earlierOpen = scheduled.slice(0, index).some((earlier) => !doneMap[earlier.id]);
+    const done = doneFor(doneMap[chore.id], actor?.id);
+    const earlierOpen = scheduled.slice(0, index).some((earlier) => !doneFor(doneMap[earlier.id], actor?.id));
     const locked = !done && chore.requireAboveDone === true && earlierOpen;
     return {
       id: chore.id,
@@ -276,7 +345,7 @@ function fail(status, reason, actor, state) {
 }
 
 export function todayBody(state, actor, now) {
-  const view = buildToday(state, now);
+  const view = buildToday(state, now, actor);
   return {
     date: view.date,
     weekday: view.weekday,
@@ -422,6 +491,10 @@ function applySettings(state, body) {
     if (typeof body.showOnWall !== 'boolean') return { error: 'invalid' };
     next.showOnWall = body.showOnWall;
   }
+  if (body.shareAcrossUsers !== undefined) {
+    if (typeof body.shareAcrossUsers !== 'boolean') return { error: 'invalid' };
+    next.shareAcrossUsers = body.shareAcrossUsers;
+  }
   if (body.webhookUrl !== undefined) {
     const parsed = parseWebhookUrl(body.webhookUrl);
     if (parsed.error) return { error: parsed.error };
@@ -457,6 +530,14 @@ function choreFromBody(body, previous) {
   if (webhook.error) return { error: webhook.error };
   const reset = parseWebhookUrl(resetSource);
   if (reset.error) return { error: reset.error };
+  let excludedMemberIds;
+  if (body.excludedMemberIds !== undefined) {
+    if (!Array.isArray(body.excludedMemberIds)) return { error: 'invalid' };
+    excludedMemberIds = cleanMemberIds(body.excludedMemberIds);
+    if (excludedMemberIds.length !== body.excludedMemberIds.length) return { error: 'invalid' };
+  } else {
+    excludedMemberIds = previous ? cleanMemberIds(previous.excludedMemberIds) : [];
+  }
   return {
     chore: {
       id: previous?.id || newId(),
@@ -468,6 +549,7 @@ function choreFromBody(body, previous) {
       requireAboveDone,
       webhookUrl: webhook.url,
       resetWebhookUrl: reset.url,
+      excludedMemberIds,
     },
   };
 }
@@ -601,6 +683,9 @@ export async function handle(state, request) {
   if (method === 'POST' && path === '/test-webhook') {
     return testWebhook(next, state, request, actor, now);
   }
+  if (method === 'POST' && path === '/import') {
+    return importState(next, request, actor);
+  }
   return fail(404, 'missing', actor, state);
 }
 
@@ -614,22 +699,24 @@ async function complete(next, original, request, actor, now) {
   const id = request.body?.id;
   if (typeof id !== 'string' || !id) return fail(400, 'invalid', actor, original);
   const { date, weekday } = zonedCalendar(now, next.settings.timezone);
+  const userId = String(actor.id || 'local');
   const scheduled = next.chores
-    .filter((chore) => chore.active && chore.days.includes(weekday))
+    .filter((chore) => chore.active && chore.days.includes(weekday) && choreIncludes(chore, next.settings, actor))
     .slice()
     .sort((a, b) => a.sort - b.sort || a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
   const chore = scheduled.find((item) => item.id === id);
   if (!chore) {
-    const exists = next.chores.some((item) => item.id === id);
-    return fail(exists ? 400 : 404, exists ? 'day' : 'missing', actor, original);
+    const stored = next.chores.find((item) => item.id === id);
+    if (!stored || !choreIncludes(stored, next.settings, actor)) return fail(404, 'missing', actor, original);
+    return fail(400, 'day', actor, original);
   }
   const doneMap = { ...(next.completions[date] || {}) };
-  if (doneMap[id]) {
+  if (doneFor(doneMap[id], userId)) {
     return { status: 200, state: next, body: todayBody(next, actor, now) };
   }
   const index = scheduled.findIndex((item) => item.id === id);
   const locked = chore.requireAboveDone === true
-    && scheduled.slice(0, index).some((earlier) => !doneMap[earlier.id]);
+    && scheduled.slice(0, index).some((earlier) => !doneFor(doneMap[earlier.id], userId));
   if (locked) return fail(409, 'locked', actor, original);
 
   if (chore.webhookUrl) {
@@ -641,13 +728,18 @@ async function complete(next, original, request, actor, now) {
     if (reply.denied) return fail(409, 'webhook_denied', actor, original);
   }
 
-  doneMap[id] = { at: now.toISOString(), by: actor.name || String(actor.id || '') };
+  const previous = doneMap[id];
+  const slot = previous && typeof previous === 'object' && typeof previous.at !== 'string' ? { ...previous } : {};
+  slot[userId] = { at: now.toISOString(), by: actor.name || userId };
+  doneMap[id] = slot;
   next.completions[date] = doneMap;
-  const view = buildToday(next, now);
-  const goal = next.goals[date];
-  const crossed = view.goalReached && !goal?.notified;
+  const view = buildToday(next, now, actor);
+  const crossed = view.goalReached && !goalNotified(next.goals[date], userId);
   if (crossed) {
-    next.goals[date] = { at: now.toISOString(), earned: view.earned, notified: true };
+    const existing = next.goals[date];
+    const map = isFlatGoal(existing) ? { '*': existing } : { ...(existing || {}) };
+    map[userId] = { at: now.toISOString(), earned: view.earned, notified: true };
+    next.goals[date] = map;
   }
   if (crossed && next.settings.webhookUrl) {
     await callWebhook(request.postWebhook, next.settings.webhookUrl, {
@@ -707,4 +799,113 @@ async function testWebhook(next, original, request, actor) {
   });
   if (reply.denied) return fail(502, 'webhook', actor, original);
   return { status: 200, state: original, body: { ok: true, ...meta(actor) } };
+}
+
+function importState(next, request, actor) {
+  if (next.chores.length) {
+    return { status: 200, state: next, body: { imported: false, ...choresBody(next, actor) } };
+  }
+  const incoming = normalizeState({
+    settings: next.settings,
+    chores: request.body?.chores,
+    completions: request.body?.completions,
+    goals: request.body?.goals,
+  });
+  next.chores = incoming.chores;
+  next.completions = incoming.completions;
+  next.goals = incoming.goals;
+  return { status: 200, state: next, body: { imported: true, ...choresBody(next, actor) } };
+}
+
+function emptyBucket() {
+  return { chores: [], completions: {}, goals: {} };
+}
+
+function bucketFrom(raw) {
+  const flat = normalizeState({
+    chores: raw?.chores,
+    completions: raw?.completions,
+    goals: raw?.goals,
+  });
+  return { chores: flat.chores, completions: flat.completions, goals: flat.goals };
+}
+
+function copyBucket(bucket) {
+  return JSON.parse(JSON.stringify(bucket));
+}
+
+/**
+ * One file holds the shared list and, when sharing is off, a list per user.
+ * A file written by an older version is the shared list.
+ */
+export function openDocument(raw) {
+  const doc = {
+    version: 2,
+    settings: defaultSettings(),
+    shared: emptyBucket(),
+    private: {},
+  };
+  if (!raw || typeof raw !== 'object') return doc;
+  const legacy = Array.isArray(raw.chores) || (raw.settings && !raw.shared && !raw.private);
+  if (legacy) {
+    const flat = normalizeState(raw);
+    doc.settings = flat.settings;
+    doc.shared = { chores: flat.chores, completions: flat.completions, goals: flat.goals };
+    return doc;
+  }
+  doc.settings = normalizeState({ settings: raw.settings }).settings;
+  doc.shared = bucketFrom(raw.shared);
+  if (raw.private && typeof raw.private === 'object') {
+    for (const [id, bucket] of Object.entries(raw.private)) {
+      if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) continue;
+      doc.private[id] = bucketFrom(bucket);
+    }
+  }
+  return doc;
+}
+
+/** The list this person reads and writes. */
+export function project(doc, actor) {
+  const shared = doc.settings.shareAcrossUsers !== false;
+  const id = String(actor?.id || 'local');
+  const bucket = shared ? doc.shared : (doc.private[id] || emptyBucket());
+  return {
+    version: 2,
+    settings: { ...doc.settings },
+    ...copyBucket(bucket),
+  };
+}
+
+/**
+ * Write a handled list back. Turning sharing off keeps the list on that
+ * account. Turning it on uses that account's list when the household list
+ * is empty.
+ */
+export function commit(doc, actor, state) {
+  const id = String(actor?.id || 'local');
+  const wasShared = doc.settings.shareAcrossUsers !== false;
+  const nowShared = state.settings.shareAcrossUsers !== false;
+  const bucket = {
+    chores: state.chores.map(cloneChore),
+    completions: copyBucket({ chores: [], completions: state.completions, goals: {} }).completions,
+    goals: copyBucket({ chores: [], completions: {}, goals: state.goals }).goals,
+  };
+  doc.settings = { ...state.settings };
+  if (wasShared === nowShared) {
+    if (nowShared) doc.shared = bucket;
+    else doc.private[id] = bucket;
+    return doc;
+  }
+  if (!nowShared) {
+    doc.private[id] = bucket;
+    doc.shared = emptyBucket();
+    return doc;
+  }
+  if (!doc.shared.chores.length) {
+    doc.shared = {
+      ...bucket,
+      chores: bucket.chores.map((chore) => ({ ...chore, excludedMemberIds: [] })),
+    };
+  }
+  return doc;
 }

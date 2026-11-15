@@ -4,7 +4,7 @@
  * calls run against localStorage. A real 401/403 from the service is shown.
  */
 
-import { PREFIX, defaultState, handle, normalizeState } from './logic.js';
+import { PREFIX, commit, handle, openDocument, project } from './logic.js';
 import { postWebhook } from './webhook.js';
 
 const STORAGE_KEY = 'kids-chores.state.v1';
@@ -32,14 +32,18 @@ function localActor(token = 'local') {
   };
 }
 
-function readState() {
+function readDocument() {
   const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return defaultState();
-  return normalizeState(JSON.parse(raw));
+  if (!raw) return openDocument(null);
+  try {
+    return openDocument(JSON.parse(raw));
+  } catch {
+    return openDocument(null);
+  }
 }
 
-function writeState(state) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+function writeDocument(doc) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(doc));
 }
 
 /**
@@ -101,6 +105,7 @@ function isAbsent(status, body) {
 
 export function createClient() {
   let csrfToken = '';
+  let seeded = false;
 
   async function deliverWebhook(url, payload, signal) {
     try {
@@ -114,18 +119,36 @@ export function createClient() {
 
   async function localRequest(method, path, body, signal) {
     if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-    const state = readState();
-    const result = await handle(state, {
+    const actor = localActor();
+    const doc = readDocument();
+    const result = await handle(project(doc, actor), {
       method,
       path,
       body,
       now: new Date(),
-      actor: localActor(),
+      actor,
       postWebhook: (url, payload) => deliverWebhook(url, payload, signal),
     });
     if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-    if (result.status < 400) writeState(result.state);
+    if (result.status < 400) {
+      commit(doc, actor, result.state);
+      writeDocument(doc);
+    }
     return result;
+  }
+
+  async function seed(signal) {
+    if (seeded) return;
+    const list = await remote('GET', '/chores', undefined, signal, false);
+    if (!list) return;
+    seeded = true;
+    const local = project(readDocument(), localActor());
+    if (!local.chores.length || (list.chores || []).length) return;
+    await remote('POST', '/import', {
+      chores: local.chores,
+      completions: local.completions,
+      goals: local.goals,
+    }, signal, false);
   }
 
   async function remote(method, path, body, signal, retry) {
@@ -165,6 +188,11 @@ export function createClient() {
   }
 
   async function request(method, path, body, signal) {
+    try {
+      await seed(signal);
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+    }
     const live = await remote(method, path, body, signal, false);
     if (live) return live;
     const local = await localRequest(method, path, body, signal);
