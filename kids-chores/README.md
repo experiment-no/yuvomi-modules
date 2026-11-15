@@ -10,6 +10,8 @@ cd kids-chores && zip -r ../kids-chores.zip .
 
 Settings → Modules → Add custom module, then enable Kids Chores. With no reverse proxy the page stores chores in this browser under `kids-chores.state.v1`. Reloading keeps them. Another browser does not see them.
 
+Updating from GitHub asks to replace the installed version with the version in this file. Confirming that replace turns the module off. Turn Kids Chores on again under Active modules, then reload the overview. The overview tile stays hidden while the module is off.
+
 ## Optional service
 
 A separate Node process can answer the same API. It does not read or write `yuvomi.db`. Yuvomi will not start it.
