@@ -303,6 +303,25 @@ export function graphFrame(points, lang, options = {}) {
   if (tempLine) svg.append(svgEl('polyline', { points: tempLine, class: 'mw-graph__temp' }));
   const windLine = linePoints(layout.marks, 'windY');
   if (windLine) svg.append(svgEl('polyline', { points: windLine, class: 'mw-graph__wind' }));
+  if (list.length <= 12) {
+    layout.marks.forEach((mark, index) => {
+      if (!Number.isFinite(mark.windY)) return;
+      svg.append(svgEl('circle', {
+        cx: mark.x,
+        cy: mark.windY,
+        r: 3.2,
+        class: 'mw-graph__wind-dot',
+      }));
+      const speed = svgEl('text', {
+        x: mark.x,
+        y: mark.windY - 8,
+        'text-anchor': 'middle',
+        class: 'mw-graph__wind-label',
+      });
+      speed.textContent = formatNumber(list[index].wind, 0);
+      svg.append(speed);
+    });
+  }
   const gustLine = linePoints(layout.marks, 'gustY');
   if (gustLine) svg.append(svgEl('polyline', { points: gustLine, class: 'mw-graph__gust' }));
 

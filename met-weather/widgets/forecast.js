@@ -168,7 +168,8 @@ function nowBlock(data, today) {
   text.className = 'mw-now__text';
   const desc = document.createElement('p');
   desc.className = 'mw-now__desc';
-  desc.textContent = condition(data.current.symbol);
+  const wind = Number.isFinite(data.current?.wind) ? `${Math.round(data.current.wind)} m/s` : '';
+  desc.textContent = [condition(data.current.symbol), wind].filter(Boolean).join(' · ');
   const place = document.createElement('p');
   place.className = 'mw-now__place';
   place.textContent = data.place?.name || '';
@@ -208,6 +209,12 @@ function columnsBlock(columns, spans, lang) {
     low.textContent = degrees(day.low);
     temps.append(high, low);
     col.append(label, symbol, temps);
+    if (Number.isFinite(day.wind)) {
+      const speed = document.createElement('div');
+      speed.className = 'mw-daycol__wind';
+      speed.textContent = `${Math.round(day.wind)} m/s`;
+      col.append(speed);
+    }
     const span = spans[index];
     if (span) {
       const bar = document.createElement('div');
