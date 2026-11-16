@@ -352,6 +352,7 @@ div.mw-face {
 }
 
 .mw-graph__days,
+.mw-graph__hours,
 .mw-graph__icons {
   position: relative;
   height: 1.15rem;
@@ -362,11 +363,18 @@ div.mw-face {
 }
 
 .mw-graph__day,
+.mw-graph__hour,
 .mw-graph__icon {
   position: absolute;
   top: 0;
   transform: translateX(-50%);
   white-space: nowrap;
+}
+
+.mw-graph__hour {
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary, var(--color-text-secondary, inherit));
 }
 
 .mw-graph__day {
@@ -389,6 +397,7 @@ div.mw-face {
 .mw-graph__grid {
   stroke: var(--color-border, rgba(127, 127, 127, 0.45));
   stroke-width: 1;
+  opacity: 0.85;
 }
 
 .mw-graph__zero {
@@ -399,10 +408,17 @@ div.mw-face {
 
 .mw-graph__temp {
   fill: none;
-  stroke: var(--chart-series-3, #C2410C);
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
+}
+
+.mw-graph__temp--warm {
+  stroke: var(--color-danger, #e11d48);
+}
+
+.mw-graph__temp--cold {
+  stroke: var(--chart-series-4, #0284C7);
 }
 
 .mw-graph__precip {
@@ -472,7 +488,7 @@ div.mw-face {
   width: 0.8rem;
   height: 0.28rem;
   border-radius: 999px;
-  background: var(--chart-series-3, #C2410C);
+  background: var(--color-danger, #e11d48);
 }
 
 .mw-graph__swatch--precip {
@@ -483,9 +499,15 @@ div.mw-face {
   background: repeating-linear-gradient(135deg, var(--chart-series-4, #0284C7) 0 2px, transparent 2px 4px);
 }
 
-.mw-graph__swatch--wind,
-.mw-graph__swatch--gust {
+.mw-graph__swatch--wind {
   background: var(--chart-series-1, #4F4DC9);
+}
+
+.mw-graph__swatch--gust {
+  height: 0;
+  border-radius: 0;
+  background: none;
+  border-top: 2px dashed var(--chart-series-1, #4F4DC9);
 }
 
 .mw-graph__updated {

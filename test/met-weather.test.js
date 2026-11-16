@@ -185,6 +185,8 @@ test('eight days keep night, morning, afternoon and evening', () => {
   assert.ok(warm.marks[0].maxH > warm.marks[0].barH);
   assert.equal(warm.marks[0].direction, 180);
   assert.ok(warm.marks[0].gustY < warm.marks[0].windY);
+  assert.ok(warm.arrowY > warm.windBase);
+  assert.ok(warm.tempTicks.some((tick) => tick.value === 0));
 
   const dense = [];
   for (let hour = 0; hour < 24; hour += 1) {
@@ -683,7 +685,7 @@ test('the sidecar answer is used when the service is there', async () => {
 test('the manifest and both languages describe the same weather module', () => {
   const manifest = JSON.parse(fs.readFileSync(new URL('../met-weather/module.json', import.meta.url), 'utf8'));
   assert.equal(manifest.id, 'met-weather');
-  assert.equal(manifest.version, '1.2.3');
+  assert.equal(manifest.version, '1.2.4');
   assert.equal(manifest.description, 'Værdata fra Norsk meteorologisk institutt');
   assert.equal(manifest.settings.labelKey, 'settings.title');
   assert.equal(manifest.capabilities.api.prefix, '/api/extensions/met-weather');

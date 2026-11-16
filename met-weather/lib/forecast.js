@@ -619,15 +619,36 @@ export function forecastFromOpenMeteo(doc, place, now = new Date()) {
   }, now);
 }
 
+function niceStep(span, count) {
+  const raw = span / Math.max(1, count);
+  if (!(raw > 0)) return 1;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const err = raw / pow;
+  const nice = err <= 1 ? 1 : err <= 2 ? 2 : err <= 5 ? 5 : 10;
+  return nice * pow;
+}
+
+function scaleTicks(min, max, count) {
+  if (!(max > min)) return [min];
+  const step = niceStep(max - min, count);
+  const start = Math.ceil((min - step * 0.001) / step) * step;
+  const ticks = [];
+  for (let value = start; value <= max + step * 0.001; value += step) {
+    ticks.push(Math.round(value * 1000) / 1000);
+  }
+  return ticks.length ? ticks : [min, max];
+}
+
 /**
  * Temperature on the upper plot, precipitation from the same base, wind and
- * gust on the lower plot. Arrow rotation points where the wind is going.
+ * gust on the lower plot. Arrow rotation points where the wind is going, and
+ * the arrows sit on their own row under that plot.
  */
 export function layoutGraph(points, box = {}) {
   const list = Array.isArray(points) ? points : [];
   const width = box.width || 960;
-  const height = box.height || 292;
-  const pad = { l: 40, r: 36, t: 12, b: 8, ...box.pad };
+  const height = box.height || 328;
+  const pad = { l: 36, r: 32, t: 8, b: 26, ...box.pad };
   const temps = list.map((point) => point.temp).filter(Number.isFinite);
   let tMin = temps.length ? Math.min(...temps, 0) : 0;
   let tMax = temps.length ? Math.max(...temps, 0) : 1;
@@ -639,15 +660,15 @@ export function layoutGraph(points, box = {}) {
   const pMax = Math.max(1, ...precips, 0);
   const winds = list.flatMap((point) => [point.wind, point.gust]).filter(Number.isFinite);
   const wMax = Math.max(1, ...winds, 0);
-  const gap = 28;
+  const gap = 22;
   const innerW = Math.max(1, width - pad.l - pad.r);
-  const plotH = Math.max(40, Math.round((height - pad.t - pad.b - gap) * 0.62));
+  const plotH = Math.max(48, Math.round((height - pad.t - pad.b - gap) * 0.62));
   const topBase = pad.t + plotH;
   const windTop = topBase + gap;
   const windBase = height - pad.b;
   const windH = Math.max(1, windBase - windTop);
   const slot = list.length > 0 ? innerW / list.length : innerW;
-  const barW = Math.max(1, slot * 0.55);
+  const barW = Math.max(1, slot * 0.42);
   const xAt = (index) => pad.l + slot * index + slot / 2;
   const yTemp = (temp) => pad.t + (1 - (temp - tMin) / (tMax - tMin)) * plotH;
   const yPrecip = (amount) => topBase - (Math.max(0, amount) / pMax) * plotH;
@@ -659,6 +680,7 @@ export function layoutGraph(points, box = {}) {
     const maxY = max == null ? null : yPrecip(max);
     return {
       x: xAt(index),
+      temp: Number.isFinite(point.temp) ? point.temp : null,
       tempY: yTemp(point.temp),
       barX: xAt(index) - barW / 2,
       barY: precipY,
@@ -682,7 +704,11 @@ export function layoutGraph(points, box = {}) {
     topBase,
     windTop,
     windBase,
+    arrowY: windBase + 14,
     zeroY: yTemp(0),
+    tempTicks: scaleTicks(tMin, tMax, 4).map((value) => ({ value, y: yTemp(value) })),
+    precipTicks: scaleTicks(0, pMax, 4).map((value) => ({ value, y: yPrecip(value) })),
+    windTicks: scaleTicks(0, wMax, 3).map((value) => ({ value, y: yWind(value) })),
     slot,
     marks,
   };
