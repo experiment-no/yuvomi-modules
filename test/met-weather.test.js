@@ -532,6 +532,40 @@ test('Yuvomi weather becomes a day view in metres per second', () => {
   assert.ok(Math.abs(view.days[0].wind - 5) < 0.05);
   assert.equal(view.days[1].wind, null);
   assert.equal(view.days[1].symbol, 'rain');
+  const dailyWind = presentForecast(forecastFromHost({
+    data: {
+      units: 'metric',
+      city: 'Langhus',
+      current: { temp: 1, wind_speed: 11, icon: 'cloud', desc: 'wmo.3' },
+      today: { date: '2026-11-17', temp_min: -4, temp_max: 1, icon: 'cloud', desc: 'wmo.3', wind_speed: 11, wind_gust: 23, wind_direction: 9 },
+      forecast: [
+        { date: '2026-11-18', temp_min: -5, temp_max: 0, icon: 'cloud-sun', desc: 'wmo.2', wind_speed: 11, wind_gust: 23, wind_direction: 11 },
+        { date: '2026-11-19', temp_min: -5, temp_max: -1, icon: 'sun', desc: 'wmo.1', wind_speed: 5, wind_gust: 12, wind_direction: 30 },
+      ],
+    },
+  }));
+  const dailyLine = graphFromDays(dailyWind.days);
+  assert.equal(dailyLine.length, 3);
+  assert.equal(dailyLine.filter((point) => Number.isFinite(point.wind)).length, 3);
+  assert.ok(layoutGraph(dailyLine).marks.filter((mark) => Number.isFinite(mark.windY)).length >= 2);
+  const lined = presentForecast(forecastFromHost({
+    data: {
+      units: 'metric',
+      city: 'Langhus',
+      current: { temp: 1, wind_speed: 11, icon: 'cloud', desc: 'wmo.3' },
+      today: { date: '2026-11-17', temp_min: -4, temp_max: 1, icon: 'cloud', desc: 'wmo.3' },
+      forecast: [],
+      hourly: [
+        { time: '2026-11-17T16:00:00.000Z', temp: 1, precip: 0, wind_speed: 8, wind_gust: 16, wind_direction: 9, icon: 'cloud', desc: 'wmo.3' },
+        { time: '2026-11-17T17:00:00.000Z', temp: 0, precip: 0.2, wind_speed: 12, wind_gust: 22, wind_direction: 20, icon: 'cloud', desc: 'wmo.3' },
+        { time: '2026-11-17T18:00:00.000Z', temp: -1, precip: 0, wind_speed: 18, wind_gust: 30, wind_direction: 40, icon: 'cloud', desc: 'wmo.3' },
+      ],
+    },
+  }));
+  assert.equal(lined.hours.length, 3);
+  assert.ok(lined.hours.every((point) => Number.isFinite(point.wind) && Number.isFinite(point.gust)));
+  assert.ok(lined.hours[2].wind > lined.hours[0].wind);
+  assert.ok(layoutGraph(lined.hours).marks.filter((mark) => Number.isFinite(mark.windY)).length >= 2);
   assert.equal(symbolFromWmo('wmo.0', 'moon'), 'clearsky_night');
   assert.equal(forecastFromHost({ data: null, reason: 'not_configured' }).configured, false);
   assert.equal(forecastFromHost({ reason: 'upstream_error' }).error, 'upstream');
@@ -685,7 +719,7 @@ test('the sidecar answer is used when the service is there', async () => {
 test('the manifest and both languages describe the same weather module', () => {
   const manifest = JSON.parse(fs.readFileSync(new URL('../met-weather/module.json', import.meta.url), 'utf8'));
   assert.equal(manifest.id, 'met-weather');
-  assert.equal(manifest.version, '1.2.4');
+  assert.equal(manifest.version, '1.2.5');
   assert.equal(manifest.description, 'Værdata fra Norsk meteorologisk institutt');
   assert.equal(manifest.settings.labelKey, 'settings.title');
   assert.equal(manifest.capabilities.api.prefix, '/api/extensions/met-weather');
