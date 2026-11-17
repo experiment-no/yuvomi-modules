@@ -129,6 +129,26 @@ function hostDay(day, units) {
   };
 }
 
+function hostHours(hourly, units) {
+  if (!Array.isArray(hourly)) return [];
+  return hourly.flatMap((step) => {
+    const temp = Number(step?.temp);
+    const time = typeof step?.time === 'string' ? step.time : '';
+    if (!Number.isFinite(temp) || !Number.isFinite(Date.parse(time))) return [];
+    return [{
+      time: new Date(time).toISOString(),
+      temp,
+      precip: Number.isFinite(Number(step.precip)) ? Number(step.precip) : 0,
+      precipSpan: 1,
+      precipMax: null,
+      wind: windMs(step.wind_speed, units),
+      gust: windMs(step.wind_gust, units),
+      direction: finiteOrNull(step.wind_direction),
+      symbol: symbolFromWmo(step.desc, step.icon),
+    }];
+  });
+}
+
 /**
  * Yuvomi's /api/v1/weather document. Hours are not in that response, so the
  * page draws the days instead. Wind arrives as km/h (or mph) and is stored as m/s.
@@ -159,7 +179,7 @@ export function forecastFromHost(payload) {
       direction: null,
       precip: null,
     },
-    hours: [],
+    hours: hostHours(data.hourly, data.units),
     days,
     attribution: {
       met: 'https://www.met.no/',
