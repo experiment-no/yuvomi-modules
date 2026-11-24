@@ -9,7 +9,7 @@ import { register } from 'node:module';
 
 import { createClient, KidsChoresError } from '../kids-chores/lib/client.js';
 import { STATE_MARK } from '../kids-chores/lib/household.js';
-import { postWebhook } from '../kids-chores/lib/webhook.js';
+import { plainFormBody, postWebhook } from '../kids-chores/lib/webhook.js';
 import {
   PREFIX,
   PROGRESS_ICONS,
@@ -1038,6 +1038,69 @@ test('a member check-off is saved and an administrator session sends the same we
     assert.equal(cleared.pending, undefined);
     await admin.today();
     assert.equal(sent.length, 2);
+  } finally {
+    globalThis.localStorage = previousStorage;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('the member form body keeps the Homey JSON types', () => {
+  const payload = { event: 'ella_checkin', state: 'yes', done: true, points: 5 };
+  const fields = plainFormBody(payload);
+  const parsed = JSON.parse(fields.body.trim());
+  assert.equal(parsed.event, 'ella_checkin');
+  assert.equal(parsed.state, 'yes');
+  assert.equal(parsed.done, true);
+  assert.equal(parsed.points, 5);
+  const quoted = plainFormBody({ event: 'tømme', state: 'yes', done: true, points: 1, title: 'a"b' });
+  const again = JSON.parse(quoted.body.trim());
+  assert.equal(again.event, 'tømme');
+  assert.equal(again.title, 'a"b');
+  assert.equal(again.done, true);
+  assert.equal(again.points, 1);
+});
+
+test('a member check-off sends the webhook without an administrator', async () => {
+  const notes = [];
+  const writes = [];
+  const sent = [];
+  let who = { id: 1, role: 'admin', name: 'Ada' };
+  const api = fakeNotes(notes, writes, () => who);
+  const storage = memoryStorage();
+  const previousStorage = globalThis.localStorage;
+  const previousFetch = globalThis.fetch;
+  globalThis.localStorage = storage;
+  globalThis.fetch = async () => { throw new TypeError('network'); };
+  const payload = { event: 'ella_checkin', state: 'yes', done: true, points: 5 };
+  const clientFor = (form) => createClient({
+    loadApi: async () => ({ api }),
+    now: () => FRIDAY,
+    relay: async () => false,
+    form,
+  });
+  try {
+    const admin = clientFor(async () => false);
+    const generic = await admin.createChore({
+      title: 'Tømme sekken',
+      points: 5,
+      days: [5],
+      assigneeIds: [],
+      webhookUrl: HOMEY,
+    });
+    who = { id: 2, role: 'member', name: 'Bea' };
+    const child = clientFor(async (url, body) => {
+      sent.push({ url, payload: body });
+      return true;
+    });
+    const done = await child.complete(generic.chore.id);
+    assert.equal(done.items.find((item) => item.title === 'Tømme sekken').done, true);
+    assert.deepEqual(sent, [{ url: HOMEY, payload }]);
+    const childLog = notes.find((note) => String(note.created_by) === '2');
+    const stored = JSON.parse(childLog.content.split('\n').slice(2).join('\n'));
+    assert.equal(stored.pending, undefined);
+    who = { id: 1, role: 'admin', name: 'Ada' };
+    await admin.today();
+    assert.equal(sent.length, 1);
   } finally {
     globalThis.localStorage = previousStorage;
     globalThis.fetch = previousFetch;
