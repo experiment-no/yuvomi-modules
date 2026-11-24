@@ -1044,6 +1044,51 @@ test('a member check-off is saved and an administrator session sends the same we
   }
 });
 
+test('an administrator check-off sends Homey once when the Kids Chores relay answers', async () => {
+  const notes = [];
+  const writes = [];
+  const sent = [];
+  let relayTries = 0;
+  let who = { id: 1, role: 'admin', name: 'Ada' };
+  const api = fakeNotes(notes, writes, () => who);
+  const storage = memoryStorage();
+  const previousStorage = globalThis.localStorage;
+  const previousFetch = globalThis.fetch;
+  globalThis.localStorage = storage;
+  globalThis.fetch = async () => { throw new TypeError('network'); };
+  const payload = { event: 'ella_checkin', state: 'yes', done: true, points: 5 };
+  try {
+    const admin = createClient({
+      loadApi: async () => ({ api }),
+      now: () => FRIDAY,
+      relay: async () => {
+        relayTries += 1;
+        return true;
+      },
+      memberRelay: async (url, body) => {
+        sent.push({ url, payload: body });
+        return { status: 200, body: { ok: true } };
+      },
+    });
+    const generic = await admin.createChore({
+      title: 'Tømme sekken',
+      points: 5,
+      days: [5],
+      assigneeIds: [],
+      webhookUrl: HOMEY,
+    });
+    await admin.complete(generic.chore.id);
+    assert.deepEqual(sent, [{ url: HOMEY, payload }]);
+    assert.equal(relayTries, 0);
+    const log = notes.find((note) => String(note.created_by) === '1');
+    const stored = JSON.parse(log.content.split('\n').slice(2).join('\n'));
+    assert.equal(stored.pending, undefined);
+  } finally {
+    globalThis.localStorage = previousStorage;
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('a member check-off sends the webhook through the Kids Chores relay', async () => {
   const notes = [];
   const writes = [];

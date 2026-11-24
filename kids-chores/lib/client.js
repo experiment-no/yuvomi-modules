@@ -144,23 +144,35 @@ export function createClient(options = {}) {
       return await postWebhook(url, payload, signal);
     } catch (err) {
       if (err?.name === 'AbortError') throw err;
-      if (await relayWebhook(url, payload)) return { status: 204, body: '' };
-      throw err;
-    }
-  }
-
-  async function sendForHousehold(url, payload, signal) {
-    try {
-      return await postWebhook(url, payload, signal);
-    } catch (err) {
-      if (err?.name === 'AbortError') throw err;
-      if (await relay(url, payload)) return { status: 204, body: '' };
       try {
         const sent = await memberSend(url, payload);
         if (sent) return sent;
       } catch (relayError) {
         if (relayError?.name === 'AbortError') throw relayError;
       }
+      if (await relayWebhook(url, payload)) return { status: 204, body: '' };
+      throw err;
+    }
+  }
+
+  /**
+   * One leave only. Prefer the Kids Chores relay (admin and member). The
+   * notification-channel path is admin-only and can throw after Homey already
+   * accepted the POST; trying it first then falling through sent the same
+   * JSON twice.
+   */
+  async function sendForHousehold(url, payload, signal) {
+    try {
+      return await postWebhook(url, payload, signal);
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      try {
+        const sent = await memberSend(url, payload);
+        if (sent) return sent;
+      } catch (relayError) {
+        if (relayError?.name === 'AbortError') throw relayError;
+      }
+      if (await relay(url, payload)) return { status: 204, body: '' };
       return null;
     }
   }
