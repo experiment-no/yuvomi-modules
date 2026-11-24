@@ -317,7 +317,6 @@ export function watchAdmin(container, token, role, signal, load) {
       clearInterval(timer);
       return;
     }
-    if (typeof document !== 'undefined' && document.hidden) return;
     void load();
   }, 4000);
   container._kcPoll = timer;

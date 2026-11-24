@@ -6,9 +6,10 @@
  * anyone else. Notes are already shared with every signed-in member. The
  * chore list lives in one note named "Kids Chores". Completions live in a
  * second note per person ("Kids Chores log") so a member can record their
- * own check-off without permission to edit someone else's note. The member's
- * own check-off posts the Homey JSON. A call that cannot leave is stored on
- * that same note and sent later from an administrator session.
+ * own check-off without permission to edit someone else's note. Homey is sent
+ * through Yuvomi's Kids Chores relay when that route is present. A call that
+ * cannot leave is stored on that same note and sent later from an
+ * administrator session.
  */
 
 import { commit, handle, openDocument, project } from './logic.js';

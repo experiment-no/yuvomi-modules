@@ -9,7 +9,7 @@ import { register } from 'node:module';
 
 import { createClient, KidsChoresError } from '../kids-chores/lib/client.js';
 import { STATE_MARK } from '../kids-chores/lib/household.js';
-import { plainFormBody, postWebhook } from '../kids-chores/lib/webhook.js';
+import { postWebhook } from '../kids-chores/lib/webhook.js';
 import {
   PREFIX,
   PROGRESS_ICONS,
@@ -1044,23 +1044,7 @@ test('a member check-off is saved and an administrator session sends the same we
   }
 });
 
-test('the member form body keeps the Homey JSON types', () => {
-  const payload = { event: 'ella_checkin', state: 'yes', done: true, points: 5 };
-  const fields = plainFormBody(payload);
-  const parsed = JSON.parse(fields.body.trim());
-  assert.equal(parsed.event, 'ella_checkin');
-  assert.equal(parsed.state, 'yes');
-  assert.equal(parsed.done, true);
-  assert.equal(parsed.points, 5);
-  const quoted = plainFormBody({ event: 'tømme', state: 'yes', done: true, points: 1, title: 'a"b' });
-  const again = JSON.parse(quoted.body.trim());
-  assert.equal(again.event, 'tømme');
-  assert.equal(again.title, 'a"b');
-  assert.equal(again.done, true);
-  assert.equal(again.points, 1);
-});
-
-test('a member check-off sends the webhook without an administrator', async () => {
+test('a member check-off sends the webhook through the Kids Chores relay', async () => {
   const notes = [];
   const writes = [];
   const sent = [];
@@ -1072,14 +1056,14 @@ test('a member check-off sends the webhook without an administrator', async () =
   globalThis.localStorage = storage;
   globalThis.fetch = async () => { throw new TypeError('network'); };
   const payload = { event: 'ella_checkin', state: 'yes', done: true, points: 5 };
-  const clientFor = (form) => createClient({
+  const clientFor = (memberRelay) => createClient({
     loadApi: async () => ({ api }),
     now: () => FRIDAY,
     relay: async () => false,
-    form,
+    memberRelay,
   });
   try {
-    const admin = clientFor(async () => false);
+    const admin = clientFor(async () => null);
     const generic = await admin.createChore({
       title: 'Tømme sekken',
       points: 5,
@@ -1090,7 +1074,7 @@ test('a member check-off sends the webhook without an administrator', async () =
     who = { id: 2, role: 'member', name: 'Bea' };
     const child = clientFor(async (url, body) => {
       sent.push({ url, payload: body });
-      return true;
+      return { status: 200, body: { ok: true } };
     });
     const done = await child.complete(generic.chore.id);
     assert.equal(done.items.find((item) => item.title === 'Tømme sekken').done, true);
