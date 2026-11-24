@@ -1,5 +1,5 @@
 import { createClient } from './lib/client.js';
-import { PROGRESS_ICONS, WEEKDAYS } from './lib/logic.js';
+import { PROGRESS_ICONS, WEEKDAYS, webhookEvent } from './lib/logic.js';
 import { loadMembers } from './lib/members.js';
 import {
   STYLE_HREF,
@@ -99,7 +99,7 @@ function settingsForm(data, signal, token, container) {
     field(tr('settings.displayTitle'), title),
     field(tr('settings.pointGoal'), goal),
     field(tr('settings.congrats'), congrats),
-    field(tr('settings.webhook'), webhook),
+    rewardWebhookField(webhook, goal, signal),
     field(tr('settings.timezone'), timezone, tr('hint.midnight')),
     iconField(icons),
     notify.wrap,
@@ -488,6 +488,115 @@ function hint(text) {
   el.className = 'form-hint';
   el.textContent = text;
   return el;
+}
+
+/** Reward webhook field with an info panel that shows the Homey JSON shape. */
+function rewardWebhookField(webhookInput, goalInput, signal) {
+  const wrap = document.createElement('div');
+  wrap.className = 'form-field';
+
+  const head = document.createElement('div');
+  head.className = 'kc-field-head';
+  const label = document.createElement('label');
+  label.className = 'form-label';
+  label.textContent = tr('settings.webhook');
+  if (!webhookInput.id) webhookInput.id = `kc-${Math.random().toString(36).slice(2, 9)}`;
+  label.htmlFor = webhookInput.id;
+
+  const infoBtn = document.createElement('button');
+  infoBtn.type = 'button';
+  infoBtn.className = 'kc-info-btn';
+  infoBtn.setAttribute('aria-label', tr('settings.webhookInfoOpen'));
+  infoBtn.setAttribute('aria-expanded', 'false');
+  infoBtn.append(infoIcon());
+
+  const panel = document.createElement('div');
+  panel.className = 'kc-info-box';
+  panel.hidden = true;
+  panel.setAttribute('role', 'region');
+  panel.setAttribute('aria-label', tr('settings.webhookInfo'));
+
+  const intro = document.createElement('p');
+  intro.className = 'kc-info-box__text';
+  const reachedLabel = document.createElement('p');
+  reachedLabel.className = 'kc-info-box__label';
+  reachedLabel.textContent = tr('settings.webhookInfoReached');
+  const reachedCode = document.createElement('pre');
+  reachedCode.className = 'kc-info-box__code';
+  const resetLabel = document.createElement('p');
+  resetLabel.className = 'kc-info-box__label';
+  resetLabel.textContent = tr('settings.webhookInfoReset');
+  const resetCode = document.createElement('pre');
+  resetCode.className = 'kc-info-box__code';
+  panel.append(intro, reachedLabel, reachedCode, resetLabel, resetCode);
+
+  function refresh() {
+    const event = webhookEvent(webhookInput.value.trim(), '') || 'event_name';
+    const points = strictInt(goalInput.value);
+    const earned = points != null && points >= 0 ? points : 35;
+    intro.textContent = tr('settings.webhookInfoIntro');
+    reachedCode.textContent = JSON.stringify({
+      event,
+      state: 'yes',
+      done: true,
+      points: earned,
+    }, null, 2);
+    resetCode.textContent = JSON.stringify({
+      event,
+      state: 'no',
+      done: false,
+      points: 0,
+    }, null, 2);
+  }
+
+  listen(infoBtn, 'click', () => {
+    const open = panel.hidden;
+    panel.hidden = !open;
+    infoBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    infoBtn.setAttribute(
+      'aria-label',
+      open ? tr('settings.webhookInfoClose') : tr('settings.webhookInfoOpen'),
+    );
+    if (open) refresh();
+  }, signal);
+  listen(webhookInput, 'input', () => {
+    if (!panel.hidden) refresh();
+  }, signal);
+  listen(goalInput, 'input', () => {
+    if (!panel.hidden) refresh();
+  }, signal);
+
+  head.append(label, infoBtn);
+  wrap.append(head, webhookInput, panel);
+  return wrap;
+}
+
+function infoIcon() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '18');
+  svg.setAttribute('height', '18');
+  svg.setAttribute('aria-hidden', 'true');
+  const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  circle.setAttribute('cx', '12');
+  circle.setAttribute('cy', '12');
+  circle.setAttribute('r', '9');
+  circle.setAttribute('fill', 'none');
+  circle.setAttribute('stroke', 'currentColor');
+  circle.setAttribute('stroke-width', '1.75');
+  const stem = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  stem.setAttribute('d', 'M12 11v6');
+  stem.setAttribute('fill', 'none');
+  stem.setAttribute('stroke', 'currentColor');
+  stem.setAttribute('stroke-width', '1.75');
+  stem.setAttribute('stroke-linecap', 'round');
+  const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  dot.setAttribute('cx', '12');
+  dot.setAttribute('cy', '7.5');
+  dot.setAttribute('r', '1.15');
+  dot.setAttribute('fill', 'currentColor');
+  svg.append(circle, stem, dot);
+  return svg;
 }
 
 function assignmentLabel(chore, data) {
