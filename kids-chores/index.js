@@ -1,4 +1,4 @@
-import { armWebhookWindow, createClient, releaseWebhookWindow } from './lib/client.js';
+import { createClient } from './lib/client.js';
 import { loadMembers, memberName } from './lib/members.js';
 import { msUntilNextDate } from './lib/logic.js';
 import { STYLE_HREF, boardSignature, ensureStyle, errorBody, listen, progressMark, showEmpty, showToast, tr, watchAdmin } from './lib/ui.js';
@@ -120,9 +120,7 @@ function boardBlock(board, data, signal, token, container) {
     const person = showName ? (memberName(data.members, board.userId) || board.userId) : '';
     for (const item of open) {
       list.append(choreRow(item, canWrite, person, signal, () => {
-        if (data.role !== 'admin') armWebhookWindow();
-        void run(container, signal, token, () => client.complete(item.id, signal, item.forUserId), true)
-          .finally(() => releaseWebhookWindow());
+        void run(container, signal, token, () => client.complete(item.id, signal, item.forUserId), true);
       }));
     }
   }

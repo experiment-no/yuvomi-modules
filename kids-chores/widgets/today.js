@@ -1,7 +1,6 @@
 import { t } from '/i18n.js';
 
 import { choresApi, moduleDisplayTitle } from '../browser.js';
-import { armWebhookWindow, releaseWebhookWindow } from '../lib/client.js';
 import { msUntilNextDate } from '../lib/logic.js';
 import { loadMembers, memberName } from '../lib/members.js';
 import { STYLE_HREF, boardSignature, ensureStyle, errorBody, listen, progressMark, showEmpty, showToast, tr, watchAdmin } from '../lib/ui.js';
@@ -164,8 +163,7 @@ function widgetBoard(board, view, signal, token, container) {
       if (canWrite) {
         row.type = 'button';
         listen(row, 'click', () => {
-          if (view.role !== 'admin') armWebhookWindow();
-          void complete(container, item, signal, token).finally(() => releaseWebhookWindow());
+          void complete(container, item, signal, token);
         }, signal);
       }
       const name = document.createElement('span');

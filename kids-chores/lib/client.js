@@ -8,7 +8,7 @@
 
 import { HouseholdError, actorFromMe, runHousehold } from './household.js';
 import { PREFIX, commit, handle, openDocument, project } from './logic.js';
-import { plainFormBody, postWebhook } from './webhook.js';
+import { postWebhook } from './webhook.js';
 
 const STORAGE_KEY = 'kids-chores.state.v1';
 const CSRF_HEADER = 'X-Kids-Chores-CSRF';
@@ -49,114 +49,34 @@ function writeDocument(doc) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(doc));
 }
 
-const WEBHOOK_WINDOW = 'kc-webhook';
-let formChain = Promise.resolve();
-let closeTimer = 0;
-let windowUsed = false;
-
 /**
- * Opens the one window a member check-off can navigate. Call this in the
- * click, before any await: a later open is blocked, and fetch to Homey is
- * blocked too. The form then posts the JSON into this window.
+ * Same-origin Homey relay for every member with Kids Chores write. Needs a
+ * Yuvomi build that mounts POST /api/v1/kids-chores/webhook. Stock Yuvomi
+ * answers 404 here; the call then waits in the outbox.
  */
-export function armWebhookWindow() {
-  if (typeof window === 'undefined') return false;
-  const current = window.__kcWebhookWindow;
-  if (current && current.closed !== true) return true;
-  let opened;
+async function memberRelay(url, payload, loadApi) {
+  let api;
   try {
-    opened = window.open('about:blank', WEBHOOK_WINDOW, 'popup=yes,width=80,height=40,left=0,top=0');
+    ({ api } = await loadApi());
   } catch {
-    return false;
+    return null;
   }
-  if (!opened) return false;
-  windowUsed = false;
-  window.__kcWebhookWindow = opened;
-  scheduleWebhookClose(opened, 12000);
-  return true;
-}
-
-/** Closes an armed window that never posted. A window that posted stays up long enough to send. */
-export function releaseWebhookWindow() {
-  if (windowUsed) return;
-  if (closeTimer) {
-    clearTimeout(closeTimer);
-    closeTimer = 0;
-  }
-  const win = typeof window === 'undefined' ? null : window.__kcWebhookWindow;
-  if (typeof window !== 'undefined') window.__kcWebhookWindow = null;
-  if (!win || win.closed === true) return;
-  try { win.close(); } catch { /* already closed */ }
-}
-
-function liveWebhookWindow() {
-  if (typeof window === 'undefined') return null;
-  const current = window.__kcWebhookWindow;
-  if (!current || current.closed === true) return null;
-  return current;
-}
-
-function scheduleWebhookClose(win, wait) {
-  if (closeTimer) clearTimeout(closeTimer);
-  closeTimer = setTimeout(() => {
-    closeTimer = 0;
-    try { win.close(); } catch { /* already closed */ }
-    if (typeof window !== 'undefined' && window.__kcWebhookWindow === win) window.__kcWebhookWindow = null;
-  }, wait);
-}
-
-function delay(ms) {
-  return new Promise((resolve) => { setTimeout(resolve, ms); });
-}
-
-function httpUrl(url) {
-  if (typeof url !== 'string' || !url) return false;
+  if (!api || typeof api.post !== 'function') return null;
   try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
-  } catch {
-    return false;
+    const body = await api.post('/kids-chores/webhook', { url, payload });
+    const result = body?.data && typeof body.data === 'object' ? body.data : body;
+    if (!result || typeof result.status !== 'number') return null;
+    return { status: result.status, body: result.body ?? '' };
+  } catch (err) {
+    if (err?.name === 'AbortError') throw err;
+    return null;
   }
-}
-
-/**
- * Posts the JSON from the page. Yuvomi's connect rule blocks fetch, and only
- * an administrator can create the notification channel below. A form is
- * allowed to leave the origin. The window must already be open from the click.
- * Two calls share that window, with a gap so the first POST is not cancelled.
- */
-async function relayViaForm(url, payload) {
-  const fields = plainFormBody(payload);
-  if (!fields || !httpUrl(url) || typeof document === 'undefined' || !document.body) return false;
-  const run = formChain.then(() => {
-    const win = liveWebhookWindow();
-    if (!win) return false;
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = url;
-    form.enctype = 'text/plain';
-    form.acceptCharset = 'UTF-8';
-    form.target = WEBHOOK_WINDOW;
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = fields.name;
-    input.value = fields.value;
-    form.append(input);
-    document.body.append(form);
-    form.submit();
-    form.remove();
-    windowUsed = true;
-    scheduleWebhookClose(win, 2000);
-    return true;
-  });
-  formChain = run.then(() => delay(800), () => delay(800));
-  return run;
 }
 
 /**
  * Yuvomi's page may only fetch its own origin. Ask Yuvomi to POST the same
  * JSON, then drop the temporary channel. Only an administrator can create
- * that channel. A member check-off uses the form above instead.
+ * that channel. Members use the Kids Chores relay above instead.
  */
 async function relayWebhook(url, payload) {
   if (typeof document === 'undefined') return false;
@@ -213,7 +133,9 @@ export function createClient(options = {}) {
   const loadApi = options.loadApi || (() => import('/api.js'));
   const clock = options.now || (() => new Date());
   const relay = typeof options.relay === 'function' ? options.relay : relayWebhook;
-  const formSend = typeof options.form === 'function' ? options.form : relayViaForm;
+  const memberSend = typeof options.memberRelay === 'function'
+    ? options.memberRelay
+    : (url, payload) => memberRelay(url, payload, loadApi);
   let csrfToken = '';
   let seeded = false;
 
@@ -234,9 +156,10 @@ export function createClient(options = {}) {
       if (err?.name === 'AbortError') throw err;
       if (await relay(url, payload)) return { status: 204, body: '' };
       try {
-        if (await formSend(url, payload)) return { status: 204, body: '' };
-      } catch (formError) {
-        if (formError?.name === 'AbortError') throw formError;
+        const sent = await memberSend(url, payload);
+        if (sent) return sent;
+      } catch (relayError) {
+        if (relayError?.name === 'AbortError') throw relayError;
       }
       return null;
     }
