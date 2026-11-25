@@ -594,6 +594,7 @@ function compactChore(chore) {
   };
   if (chore.active === false) out.active = false;
   if (chore.requireAboveDone) out.requireAboveDone = true;
+  if (chore.unlockDelayMinutes) out.unlockDelayMinutes = chore.unlockDelayMinutes;
   if (chore.webhookUrl) out.webhookUrl = chore.webhookUrl;
   if (chore.resetWebhookUrl) out.resetWebhookUrl = chore.resetWebhookUrl;
   if (Array.isArray(chore.assigneeIds)) out.assigneeIds = [...chore.assigneeIds];

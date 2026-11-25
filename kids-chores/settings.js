@@ -260,10 +260,11 @@ function choreRow(chore, index, total, data, signal, token, container) {
   const assigned = assignmentLabel(chore, data);
   if (assigned) meta.textContent += ` · ${assigned}`;
   main.append(name, meta);
-  if (chore.requireAboveDone || chore.webhookUrl || chore.resetWebhookUrl) {
+  if (chore.requireAboveDone || chore.unlockDelayMinutes || chore.webhookUrl || chore.resetWebhookUrl) {
     const badges = document.createElement('span');
     badges.className = 'kc-row__badges';
     if (chore.requireAboveDone) badges.append(badge(tr('chores.waits')));
+    if (chore.unlockDelayMinutes) badges.append(badge(tr('chores.hasDelay', { minutes: chore.unlockDelayMinutes })));
     if (chore.webhookUrl || chore.resetWebhookUrl) badges.append(badge(tr('chores.hasWebhook')));
     main.append(badges);
   }
@@ -347,6 +348,8 @@ function editor(chore, data, signal, token, container) {
   });
   const active = toggleField(tr('chores.field.active'), chore ? chore.active !== false : true);
   const above = toggleField(tr('chores.field.requireAbove'), chore?.requireAboveDone === true);
+  const delay = input(chore?.unlockDelayMinutes ? String(chore.unlockDelayMinutes) : '0', 'text');
+  delay.inputMode = 'numeric';
   const members = memberPicker(chore, data);
   const webhook = input(chore?.webhookUrl || '', 'url');
   const reset = input(chore?.resetWebhookUrl || '', 'url');
@@ -361,6 +364,7 @@ function editor(chore, data, signal, token, container) {
     field(tr('chores.field.days'), dayBox),
     active.wrap,
     above.wrap,
+    field(tr('chores.field.unlockDelay'), delay, tr('chores.field.unlockDelayHint')),
     members.field,
     field(tr('chores.field.webhook'), webhook),
     field(tr('chores.field.resetWebhook'), reset),
@@ -389,12 +393,18 @@ function editor(chore, data, signal, token, container) {
       showToast(tr('reasons.invalid'), 'error');
       return;
     }
+    const delayMinutes = strictInt(delay.value);
+    if (delayMinutes == null || delayMinutes > 24 * 60) {
+      showToast(tr('reasons.invalid'), 'error');
+      return;
+    }
     const body = {
       title: title.value,
       points: value,
       days: WEEKDAYS.filter((_, index) => dayInputs[index].checked),
       active: active.input.checked,
       requireAboveDone: above.input.checked,
+      unlockDelayMinutes: delayMinutes,
       ...(members.ids ? { assigneeIds: members.ids() } : {}),
       webhookUrl: webhook.value,
       resetWebhookUrl: reset.value,

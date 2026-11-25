@@ -70,6 +70,28 @@ function draw(container, data, signal, token) {
   root.append(toolbar, body);
   container.replaceChildren(root);
   armMidnight(container, signal, token, data.settings.timezone);
+  armDelay(container, signal, token, data);
+}
+
+function armDelay(container, signal, token, data) {
+  clearTimeout(container._kcDelay);
+  let soonest = Infinity;
+  for (const board of boardsOf(data)) {
+    for (const item of board.items || []) {
+      if (!item?.locked || !item.availableAt) continue;
+      const at = Date.parse(item.availableAt);
+      if (Number.isFinite(at) && at < soonest) soonest = at;
+    }
+  }
+  if (!Number.isFinite(soonest) || soonest === Infinity) return;
+  const delay = Math.max(500, soonest - Date.now() + 250);
+  container._kcDelay = setTimeout(() => {
+    if (!stopped(container, signal, token)) void paint(container, signal, token);
+  }, delay);
+  if (signal && !container._kcDelayAbort) {
+    container._kcDelayAbort = true;
+    signal.addEventListener('abort', () => clearTimeout(container._kcDelay), { once: true });
+  }
 }
 
 function boardsOf(data) {

@@ -1266,6 +1266,39 @@ test('an explicit Homey refusal still blocks a member check-off', async () => {
   }
 });
 
+test('a delay keeps the next chore locked until the minutes have passed', async () => {
+  let state = defaultState();
+  state.settings.pointGoal = 10;
+  const first = await ask(state, 'POST', '/chores', { title: 'Bags', points: 1, days: [5] });
+  state = first.state;
+  const second = await ask(state, 'POST', '/chores', {
+    title: 'Shoes',
+    points: 1,
+    days: [5],
+    requireAboveDone: true,
+    unlockDelayMinutes: 10,
+  });
+  state = second.state;
+  const bags = first.body.chore.id;
+  const shoes = second.body.chore.id;
+  const before = await ask(state, 'GET', '/today');
+  assert.equal(before.body.items.find((item) => item.id === shoes).locked, true);
+  assert.equal(before.body.items.find((item) => item.id === shoes).lockReason, 'above');
+
+  const done = await ask(state, 'POST', '/complete', { id: bags });
+  state = done.state;
+  const waiting = await ask(state, 'GET', '/today', undefined, admin, undefined, new Date(FRIDAY.getTime() + 60_000));
+  const locked = waiting.body.items.find((item) => item.id === shoes);
+  assert.equal(locked.locked, true);
+  assert.equal(locked.lockReason, 'delay');
+  assert.ok(locked.availableAt);
+
+  const open = await ask(state, 'GET', '/today', undefined, admin, undefined, new Date(FRIDAY.getTime() + 11 * 60_000));
+  assert.equal(open.body.items.find((item) => item.id === shoes).locked, false);
+  const finish = await ask(state, 'POST', '/complete', { id: shoes }, admin, undefined, new Date(FRIDAY.getTime() + 11 * 60_000));
+  assert.equal(finish.status, 200);
+});
+
 function fakeNotes(notes, writes, session) {
   let nextId = 1;
   const me = () => session();

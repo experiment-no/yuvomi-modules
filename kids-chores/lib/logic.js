@@ -104,12 +104,19 @@ function cloneChore(chore) {
     active: chore.active !== false,
     sort: chore.sort,
     requireAboveDone: Boolean(chore.requireAboveDone),
+    unlockDelayMinutes: cleanDelayMinutes(chore.unlockDelayMinutes),
     webhookUrl: chore.webhookUrl || null,
     resetWebhookUrl: chore.resetWebhookUrl || null,
     assigneeIds: copyAssigneeIds(chore.assigneeIds),
     excludedMemberIds: cleanMemberIds(chore.excludedMemberIds),
   };
 }
+
+function cleanDelayMinutes(value) {
+  if (!Number.isInteger(value) || value < 0) return 0;
+  return Math.min(value, 24 * 60);
+}
+
 
 export function normalizeState(raw) {
   const state = defaultState();
@@ -197,6 +204,7 @@ function normalizeChore(raw, index) {
     active: raw.active !== false,
     sort: Number.isFinite(raw.sort) ? raw.sort : index,
     requireAboveDone: raw.requireAboveDone === true,
+    unlockDelayMinutes: cleanDelayMinutes(raw.unlockDelayMinutes),
     webhookUrl: typeof raw.webhookUrl === 'string' && raw.webhookUrl ? raw.webhookUrl : null,
     resetWebhookUrl: typeof raw.resetWebhookUrl === 'string' && raw.resetWebhookUrl ? raw.resetWebhookUrl : null,
     assigneeIds: assigneeList(raw),
@@ -249,11 +257,18 @@ function copyAssigneeIds(value) {
 
 /** A completion stored as `{ at, by }` counts for every member. Newer rows are per user id. */
 export function doneFor(entry, userId) {
-  if (!entry || typeof entry !== 'object') return false;
-  if (typeof entry.at === 'string') return true;
-  const id = String(userId ?? '');
-  return Boolean(entry['*'] || (id && entry[id]));
+  return Boolean(doneEntry(entry, userId));
 }
+
+export function doneEntry(entry, userId) {
+  if (!entry || typeof entry !== 'object') return null;
+  if (typeof entry.at === 'string') return entry;
+  const id = String(userId ?? '');
+  if (id && entry[id] && typeof entry[id] === 'object') return entry[id];
+  if (entry['*'] && typeof entry['*'] === 'object') return entry['*'];
+  return null;
+}
+
 
 /**
  * Who has this chore on their own list. Sharing off shows the account's list.
@@ -329,8 +344,7 @@ export function buildToday(state, now = new Date(), actor = null, targetUserId) 
 
   const items = scheduled.map((chore, index) => {
     const done = doneFor(doneMap[chore.id], targetId);
-    const earlierOpen = scheduled.slice(0, index).some((earlier) => !doneFor(doneMap[earlier.id], targetId));
-    const locked = !done && chore.requireAboveDone === true && earlierOpen;
+    const gate = choreGate(chore, index, scheduled, doneMap, targetId, now, date, state.settings.timezone);
     return {
       id: chore.id,
       title: chore.title,
@@ -338,8 +352,11 @@ export function buildToday(state, now = new Date(), actor = null, targetUserId) 
       days: [...chore.days],
       sort: chore.sort,
       requireAboveDone: chore.requireAboveDone === true,
+      unlockDelayMinutes: chore.unlockDelayMinutes || 0,
       done,
-      locked,
+      locked: !done && gate.locked,
+      lockReason: !done && gate.locked ? gate.reason : null,
+      availableAt: !done && gate.availableAt ? gate.availableAt : null,
       forUserId: targetId || 'local',
     };
   });
@@ -461,6 +478,62 @@ function prune(state, today) {
   for (const date of Object.keys(state.goals)) {
     if (date < cutoff) delete state.goals[date];
   }
+}
+
+/**
+ * When a chore waits on the ones above and/or on a delay before it is visible.
+ * Delay starts when every earlier chore is done (with requireAboveDone), else
+ * at the start of the household calendar day.
+ */
+export function choreGate(chore, index, scheduled, doneMap, userId, now, date, timeZone) {
+  if (chore.requireAboveDone === true) {
+    const earlierOpen = scheduled.slice(0, index).some((earlier) => !doneFor(doneMap[earlier.id], userId));
+    if (earlierOpen) return { locked: true, reason: 'above', availableAt: null };
+  }
+
+  const delayMinutes = cleanDelayMinutes(chore.unlockDelayMinutes);
+  let availableAt = null;
+  if (delayMinutes > 0) {
+    let startMs = null;
+    if (chore.requireAboveDone === true && index > 0) {
+      startMs = latestDoneAt(scheduled.slice(0, index), doneMap, userId);
+      if (startMs == null) return { locked: true, reason: 'above', availableAt: null };
+    } else {
+      startMs = zonedDayStartMs(date, timeZone);
+    }
+    const readyMs = startMs + delayMinutes * 60_000;
+    availableAt = new Date(readyMs).toISOString();
+    if (now.getTime() < readyMs) return { locked: true, reason: 'delay', availableAt };
+  }
+
+  return { locked: false, reason: null, availableAt };
+}
+
+
+function latestDoneAt(chores, doneMap, userId) {
+  let latest = 0;
+  for (const chore of chores) {
+    const entry = doneEntry(doneMap[chore.id], userId);
+    if (!entry) return null;
+    const at = Date.parse(entry.at);
+    if (!Number.isFinite(at)) return null;
+    if (at > latest) latest = at;
+  }
+  return latest;
+}
+
+/** UTC millis for 00:00 on `YYYY-MM-DD` in the household time zone. */
+export function zonedDayStartMs(isoDate, timeZone) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return Date.parse(`${isoDate}T00:00:00Z`) || Date.now();
+  const zone = isValidTimeZone(timeZone) ? timeZone : 'Europe/Oslo';
+  let lo = Date.parse(`${isoDate}T00:00:00.000Z`) - 36 * 60 * 60 * 1000;
+  let hi = Date.parse(`${isoDate}T00:00:00.000Z`) + 36 * 60 * 60 * 1000;
+  while (hi - lo > 1000) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (zonedCalendar(new Date(mid), zone).date < isoDate) lo = mid;
+    else hi = mid;
+  }
+  return hi;
 }
 
 function shiftDate(iso, days) {
@@ -654,6 +727,13 @@ function choreFromBody(body, previous) {
     ? body.requireAboveDone
     : (previous ? previous.requireAboveDone : false);
   if (typeof requireAboveDone !== 'boolean') return { error: 'invalid' };
+  let unlockDelayMinutes = previous ? cleanDelayMinutes(previous.unlockDelayMinutes) : 0;
+  if (body.unlockDelayMinutes !== undefined) {
+    if (!Number.isInteger(body.unlockDelayMinutes) || body.unlockDelayMinutes < 0 || body.unlockDelayMinutes > 24 * 60) {
+      return { error: 'invalid' };
+    }
+    unlockDelayMinutes = body.unlockDelayMinutes;
+  }
   const webhookSource = body.webhookUrl !== undefined ? body.webhookUrl : previous?.webhookUrl ?? null;
   const resetSource = body.resetWebhookUrl !== undefined ? body.resetWebhookUrl : previous?.resetWebhookUrl ?? null;
   const webhook = parseWebhookUrl(webhookSource);
@@ -689,6 +769,7 @@ function choreFromBody(body, previous) {
       active,
       sort: previous?.sort ?? 0,
       requireAboveDone,
+      unlockDelayMinutes,
       webhookUrl: webhook.url,
       resetWebhookUrl: reset.url,
       assigneeIds,
@@ -904,9 +985,17 @@ async function complete(next, original, request, actor, now, rollToday) {
     return { status: 200, state: next, body: todayBody(next, actor, now, userId) };
   }
   const index = scheduled.findIndex((item) => item.id === id);
-  const locked = chore.requireAboveDone === true
-    && scheduled.slice(0, index).some((earlier) => !doneFor(doneMap[earlier.id], userId));
-  if (locked) return fail(409, 'locked', actor, original);
+  const gate = choreGate(
+    chore,
+    index,
+    scheduled,
+    doneMap,
+    userId,
+    now,
+    date,
+    next.settings.timezone,
+  );
+  if (gate.locked) return fail(409, 'locked', actor, original);
   if (typeof rollToday === 'function') await rollToday();
 
   if (chore.webhookUrl) {
@@ -982,6 +1071,7 @@ async function resetToday(next, request, actor, now) {
   if (await sendDayLow(next, request, date)) next.settings.rolledOn = date;
   return { status: 200, state: next, body: todayBody(next, actor, now) };
 }
+
 
 async function testWebhook(next, original, request, actor) {
   if (actor.local) {
