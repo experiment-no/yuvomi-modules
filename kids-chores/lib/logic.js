@@ -47,6 +47,7 @@ export function defaultState() {
     chores: [],
     completions: {},
     goals: {},
+    unlocks: {},
   };
 }
 
@@ -104,11 +105,36 @@ function cloneChore(chore) {
     active: chore.active !== false,
     sort: chore.sort,
     requireAboveDone: Boolean(chore.requireAboveDone),
+    unlockDelayMinutes: cleanDelayMinutes(chore.unlockDelayMinutes),
+    requireWebhookUnlock: Boolean(chore.requireWebhookUnlock),
+    unlockToken: cleanUnlockToken(chore.unlockToken),
     webhookUrl: chore.webhookUrl || null,
     resetWebhookUrl: chore.resetWebhookUrl || null,
     assigneeIds: copyAssigneeIds(chore.assigneeIds),
     excludedMemberIds: cleanMemberIds(chore.excludedMemberIds),
   };
+}
+
+function cleanDelayMinutes(value) {
+  if (!Number.isInteger(value) || value < 0) return 0;
+  return Math.min(value, 24 * 60);
+}
+
+function cleanUnlockToken(value) {
+  if (typeof value !== 'string') return null;
+  const token = value.trim();
+  if (!/^kc_[A-Za-z0-9]{8,32}$/.test(token)) return null;
+  return token;
+}
+
+export function newUnlockToken() {
+  const bytes = new Uint8Array(9);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  }
+  return `kc_${Array.from(bytes, (byte) => byte.toString(36).padStart(2, '0')).join('').slice(0, 16)}`;
 }
 
 export function normalizeState(raw) {
@@ -182,13 +208,42 @@ export function normalizeState(raw) {
       if (Object.keys(people).length) state.goals[date] = people;
     }
   }
+  if (raw.unlocks && typeof raw.unlocks === 'object') {
+    for (const [date, day] of Object.entries(raw.unlocks)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !day || typeof day !== 'object') continue;
+      const cleaned = {};
+      for (const [choreId, entry] of Object.entries(day)) {
+        const people = cleanUnlockDayEntry(entry);
+        if (people) cleaned[choreId] = people;
+      }
+      if (Object.keys(cleaned).length) state.unlocks[date] = cleaned;
+    }
+  }
   return state;
+}
+
+function cleanUnlockDayEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  if (typeof entry.at === 'string') {
+    return { at: entry.at.slice(0, 40), by: typeof entry.by === 'string' ? entry.by.slice(0, 80) : 'webhook' };
+  }
+  const people = {};
+  for (const [userId, row] of Object.entries(entry)) {
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(userId) || !row || typeof row !== 'object') continue;
+    if (typeof row.at !== 'string') continue;
+    people[userId] = {
+      at: row.at.slice(0, 40),
+      by: typeof row.by === 'string' ? row.by.slice(0, 80) : 'webhook',
+    };
+  }
+  return Object.keys(people).length ? people : null;
 }
 
 function normalizeChore(raw, index) {
   if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !raw.id) return null;
   const title = cleanText(raw.title, 80);
   if (!title) return null;
+  const requireWebhookUnlock = raw.requireWebhookUnlock === true;
   return {
     id: raw.id.slice(0, 80),
     title,
@@ -197,6 +252,9 @@ function normalizeChore(raw, index) {
     active: raw.active !== false,
     sort: Number.isFinite(raw.sort) ? raw.sort : index,
     requireAboveDone: raw.requireAboveDone === true,
+    unlockDelayMinutes: cleanDelayMinutes(raw.unlockDelayMinutes),
+    requireWebhookUnlock,
+    unlockToken: requireWebhookUnlock ? cleanUnlockToken(raw.unlockToken) : null,
     webhookUrl: typeof raw.webhookUrl === 'string' && raw.webhookUrl ? raw.webhookUrl : null,
     resetWebhookUrl: typeof raw.resetWebhookUrl === 'string' && raw.resetWebhookUrl ? raw.resetWebhookUrl : null,
     assigneeIds: assigneeList(raw),
@@ -249,10 +307,20 @@ function copyAssigneeIds(value) {
 
 /** A completion stored as `{ at, by }` counts for every member. Newer rows are per user id. */
 export function doneFor(entry, userId) {
-  if (!entry || typeof entry !== 'object') return false;
-  if (typeof entry.at === 'string') return true;
+  return Boolean(doneEntry(entry, userId));
+}
+
+export function doneEntry(entry, userId) {
+  if (!entry || typeof entry !== 'object') return null;
+  if (typeof entry.at === 'string') return entry;
   const id = String(userId ?? '');
-  return Boolean(entry['*'] || (id && entry[id]));
+  if (id && entry[id] && typeof entry[id] === 'object') return entry[id];
+  if (entry['*'] && typeof entry['*'] === 'object') return entry['*'];
+  return null;
+}
+
+export function unlockedFor(entry, userId) {
+  return Boolean(doneEntry(entry, userId));
 }
 
 /**
@@ -327,10 +395,10 @@ export function buildToday(state, now = new Date(), actor = null, targetUserId) 
     .slice()
     .sort((a, b) => a.sort - b.sort || a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
 
+  const unlockDay = state.unlocks?.[date] || {};
   const items = scheduled.map((chore, index) => {
     const done = doneFor(doneMap[chore.id], targetId);
-    const earlierOpen = scheduled.slice(0, index).some((earlier) => !doneFor(doneMap[earlier.id], targetId));
-    const locked = !done && chore.requireAboveDone === true && earlierOpen;
+    const gate = choreGate(chore, index, scheduled, doneMap, unlockDay, targetId, now, date, state.settings.timezone);
     return {
       id: chore.id,
       title: chore.title,
@@ -338,8 +406,12 @@ export function buildToday(state, now = new Date(), actor = null, targetUserId) 
       days: [...chore.days],
       sort: chore.sort,
       requireAboveDone: chore.requireAboveDone === true,
+      unlockDelayMinutes: chore.unlockDelayMinutes || 0,
+      requireWebhookUnlock: chore.requireWebhookUnlock === true,
       done,
-      locked,
+      locked: !done && gate.locked,
+      lockReason: !done && gate.locked ? gate.reason : null,
+      availableAt: !done && gate.availableAt ? gate.availableAt : null,
       forUserId: targetId || 'local',
     };
   });
@@ -461,6 +533,70 @@ function prune(state, today) {
   for (const date of Object.keys(state.goals)) {
     if (date < cutoff) delete state.goals[date];
   }
+  for (const date of Object.keys(state.unlocks || {})) {
+    if (date < cutoff) delete state.unlocks[date];
+  }
+}
+
+/**
+ * When a chore waits on the ones above, on a delay, and/or on a Homey unlock.
+ * Delay starts when every earlier chore is done (with requireAboveDone), else
+ * at the start of the household calendar day.
+ */
+export function choreGate(chore, index, scheduled, doneMap, unlockDay, userId, now, date, timeZone) {
+  if (chore.requireAboveDone === true) {
+    const earlierOpen = scheduled.slice(0, index).some((earlier) => !doneFor(doneMap[earlier.id], userId));
+    if (earlierOpen) return { locked: true, reason: 'above', availableAt: null };
+  }
+
+  const delayMinutes = cleanDelayMinutes(chore.unlockDelayMinutes);
+  let availableAt = null;
+  if (delayMinutes > 0) {
+    let startMs = null;
+    if (chore.requireAboveDone === true && index > 0) {
+      startMs = latestDoneAt(scheduled.slice(0, index), doneMap, userId);
+      if (startMs == null) return { locked: true, reason: 'above', availableAt: null };
+    } else {
+      startMs = zonedDayStartMs(date, timeZone);
+    }
+    const readyMs = startMs + delayMinutes * 60_000;
+    availableAt = new Date(readyMs).toISOString();
+    if (now.getTime() < readyMs) return { locked: true, reason: 'delay', availableAt };
+  }
+
+  if (chore.requireWebhookUnlock === true) {
+    if (!unlockedFor(unlockDay?.[chore.id], userId)) {
+      return { locked: true, reason: 'webhook', availableAt };
+    }
+  }
+
+  return { locked: false, reason: null, availableAt };
+}
+
+function latestDoneAt(chores, doneMap, userId) {
+  let latest = 0;
+  for (const chore of chores) {
+    const entry = doneEntry(doneMap[chore.id], userId);
+    if (!entry) return null;
+    const at = Date.parse(entry.at);
+    if (!Number.isFinite(at)) return null;
+    if (at > latest) latest = at;
+  }
+  return latest;
+}
+
+/** UTC millis for 00:00 on `YYYY-MM-DD` in the household time zone. */
+export function zonedDayStartMs(isoDate, timeZone) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return Date.parse(`${isoDate}T00:00:00Z`) || Date.now();
+  const zone = isValidTimeZone(timeZone) ? timeZone : 'Europe/Oslo';
+  let lo = Date.parse(`${isoDate}T00:00:00.000Z`) - 36 * 60 * 60 * 1000;
+  let hi = Date.parse(`${isoDate}T00:00:00.000Z`) + 36 * 60 * 60 * 1000;
+  while (hi - lo > 1000) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (zonedCalendar(new Date(mid), zone).date < isoDate) lo = mid;
+    else hi = mid;
+  }
+  return hi;
 }
 
 function shiftDate(iso, days) {
@@ -654,6 +790,27 @@ function choreFromBody(body, previous) {
     ? body.requireAboveDone
     : (previous ? previous.requireAboveDone : false);
   if (typeof requireAboveDone !== 'boolean') return { error: 'invalid' };
+  let unlockDelayMinutes = previous ? cleanDelayMinutes(previous.unlockDelayMinutes) : 0;
+  if (body.unlockDelayMinutes !== undefined) {
+    if (!Number.isInteger(body.unlockDelayMinutes) || body.unlockDelayMinutes < 0 || body.unlockDelayMinutes > 24 * 60) {
+      return { error: 'invalid' };
+    }
+    unlockDelayMinutes = body.unlockDelayMinutes;
+  }
+  const requireWebhookUnlock = body.requireWebhookUnlock !== undefined
+    ? body.requireWebhookUnlock
+    : (previous ? previous.requireWebhookUnlock === true : false);
+  if (typeof requireWebhookUnlock !== 'boolean') return { error: 'invalid' };
+  let unlockToken = previous ? cleanUnlockToken(previous.unlockToken) : null;
+  if (requireWebhookUnlock) {
+    if (body.unlockToken !== undefined) {
+      unlockToken = cleanUnlockToken(body.unlockToken);
+      if (body.unlockToken && !unlockToken) return { error: 'invalid' };
+    }
+    if (!unlockToken) unlockToken = newUnlockToken();
+  } else {
+    unlockToken = null;
+  }
   const webhookSource = body.webhookUrl !== undefined ? body.webhookUrl : previous?.webhookUrl ?? null;
   const resetSource = body.resetWebhookUrl !== undefined ? body.resetWebhookUrl : previous?.resetWebhookUrl ?? null;
   const webhook = parseWebhookUrl(webhookSource);
@@ -689,6 +846,9 @@ function choreFromBody(body, previous) {
       active,
       sort: previous?.sort ?? 0,
       requireAboveDone,
+      unlockDelayMinutes,
+      requireWebhookUnlock,
+      unlockToken,
       webhookUrl: webhook.url,
       resetWebhookUrl: reset.url,
       assigneeIds,
@@ -848,6 +1008,9 @@ export async function handle(state, request) {
   if (method === 'POST' && path === '/complete') {
     return complete(next, state, request, actor, now, rollToday);
   }
+  if (method === 'POST' && path === '/unlock') {
+    return unlockChore(next, state, request, actor, now, rollToday);
+  }
   if (method === 'POST' && path === '/reset-today') {
     return resetToday(next, request, actor, now);
   }
@@ -865,6 +1028,7 @@ export async function handle(state, request) {
 function needFor(method, path) {
   if (method === 'GET' && path === '/today') return 'read';
   if (method === 'POST' && path === '/complete') return 'write';
+  if (method === 'POST' && path === '/unlock') return 'write';
   return 'admin';
 }
 
@@ -904,9 +1068,18 @@ async function complete(next, original, request, actor, now, rollToday) {
     return { status: 200, state: next, body: todayBody(next, actor, now, userId) };
   }
   const index = scheduled.findIndex((item) => item.id === id);
-  const locked = chore.requireAboveDone === true
-    && scheduled.slice(0, index).some((earlier) => !doneFor(doneMap[earlier.id], userId));
-  if (locked) return fail(409, 'locked', actor, original);
+  const gate = choreGate(
+    chore,
+    index,
+    scheduled,
+    doneMap,
+    next.unlocks?.[date] || {},
+    userId,
+    now,
+    date,
+    next.settings.timezone,
+  );
+  if (gate.locked) return fail(409, 'locked', actor, original);
   if (typeof rollToday === 'function') await rollToday();
 
   if (chore.webhookUrl) {
@@ -979,8 +1152,58 @@ async function resetToday(next, request, actor, now) {
   const { date } = zonedCalendar(now, next.settings.timezone);
   delete next.completions[date];
   delete next.goals[date];
+  if (next.unlocks) delete next.unlocks[date];
   if (await sendDayLow(next, request, date)) next.settings.rolledOn = date;
   return { status: 200, state: next, body: todayBody(next, actor, now) };
+}
+
+/**
+ * Homey (or an admin test) unlocks a chore that waits on requireWebhookUnlock.
+ * Body: { token } or { id }, optional forUserId, state must be yes when present.
+ */
+async function unlockChore(next, original, request, actor, now, rollToday) {
+  const stateValue = request.body?.state;
+  if (stateValue !== undefined && stateValue !== 'yes' && stateValue !== true) {
+    return fail(400, 'invalid', actor, original);
+  }
+  const viewerId = String(actor.id || 'local');
+  let userId = viewerId;
+  if (request.body?.forUserId !== undefined) {
+    if (typeof request.body.forUserId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(request.body.forUserId)) {
+      return fail(400, 'invalid', actor, original);
+    }
+    userId = request.body.forUserId;
+  }
+  const following = cleanMemberIds(next.followingIds);
+  const mayAct = userId === viewerId
+    || actor.role === 'admin'
+    || (next.settings.shareAcrossUsers !== false && following.includes(userId));
+  if (!mayAct) return fail(404, 'missing', actor, original);
+
+  let chore = null;
+  const token = cleanUnlockToken(request.body?.token);
+  if (token) {
+    chore = next.chores.find((item) => item.requireWebhookUnlock && item.unlockToken === token) || null;
+  } else if (typeof request.body?.id === 'string' && request.body.id) {
+    chore = next.chores.find((item) => item.id === request.body.id) || null;
+  }
+  if (!chore || !chore.requireWebhookUnlock) return fail(404, 'missing', actor, original);
+
+  const { date } = zonedCalendar(now, next.settings.timezone);
+  if (!next.unlocks || typeof next.unlocks !== 'object') next.unlocks = {};
+  const day = { ...(next.unlocks[date] || {}) };
+  const previous = day[chore.id];
+  const slot = previous && typeof previous === 'object' && typeof previous.at === 'string'
+    ? { '*': previous }
+    : (previous && typeof previous === 'object' ? { ...previous } : {});
+  slot[userId] = {
+    at: now.toISOString(),
+    by: actor.name || String(actor.id || 'webhook'),
+  };
+  day[chore.id] = slot;
+  next.unlocks[date] = day;
+  if (typeof rollToday === 'function') await rollToday();
+  return { status: 200, state: next, body: todayBody(next, actor, now, userId) };
 }
 
 async function testWebhook(next, original, request, actor) {
@@ -1024,7 +1247,7 @@ function importState(next, request, actor) {
 }
 
 function emptyBucket() {
-  return { chores: [], completions: {}, goals: {} };
+  return { chores: [], completions: {}, goals: {}, unlocks: {} };
 }
 
 function bucketFrom(raw) {
@@ -1032,8 +1255,9 @@ function bucketFrom(raw) {
     chores: raw?.chores,
     completions: raw?.completions,
     goals: raw?.goals,
+    unlocks: raw?.unlocks,
   });
-  return { chores: flat.chores, completions: flat.completions, goals: flat.goals };
+  return { chores: flat.chores, completions: flat.completions, goals: flat.goals, unlocks: flat.unlocks };
 }
 
 function copyBucket(bucket) {
@@ -1057,7 +1281,12 @@ export function openDocument(raw) {
   if (legacy) {
     const flat = normalizeState(raw);
     doc.settings = flat.settings;
-    doc.shared = { chores: flat.chores, completions: flat.completions, goals: flat.goals };
+    doc.shared = {
+      chores: flat.chores,
+      completions: flat.completions,
+      goals: flat.goals,
+      unlocks: flat.unlocks,
+    };
     return doc;
   }
   doc.settings = normalizeState({ settings: raw.settings }).settings;
@@ -1101,8 +1330,9 @@ export function commit(doc, actor, state) {
   const nowShared = state.settings.shareAcrossUsers !== false;
   const bucket = {
     chores: state.chores.map(cloneChore),
-    completions: copyBucket({ chores: [], completions: state.completions, goals: {} }).completions,
-    goals: copyBucket({ chores: [], completions: {}, goals: state.goals }).goals,
+    completions: copyBucket({ chores: [], completions: state.completions, goals: {}, unlocks: {} }).completions,
+    goals: copyBucket({ chores: [], completions: {}, goals: state.goals, unlocks: {} }).goals,
+    unlocks: copyBucket({ chores: [], completions: {}, goals: {}, unlocks: state.unlocks || {} }).unlocks,
   };
   doc.settings = { ...state.settings };
   if (!doc.subscriptions || typeof doc.subscriptions !== 'object') doc.subscriptions = {};

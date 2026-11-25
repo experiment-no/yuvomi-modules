@@ -412,6 +412,9 @@ export function createClient(options = {}) {
       if (forUserId) body.forUserId = forUserId;
       return request('POST', '/complete', body, signal);
     },
+    unlock(body, signal) {
+      return request('POST', '/unlock', body, signal);
+    },
     resetToday(signal) {
       return request('POST', '/reset-today', {}, signal);
     },

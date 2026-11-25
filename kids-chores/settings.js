@@ -260,10 +260,12 @@ function choreRow(chore, index, total, data, signal, token, container) {
   const assigned = assignmentLabel(chore, data);
   if (assigned) meta.textContent += ` · ${assigned}`;
   main.append(name, meta);
-  if (chore.requireAboveDone || chore.webhookUrl || chore.resetWebhookUrl) {
+  if (chore.requireAboveDone || chore.unlockDelayMinutes || chore.requireWebhookUnlock || chore.webhookUrl || chore.resetWebhookUrl) {
     const badges = document.createElement('span');
     badges.className = 'kc-row__badges';
     if (chore.requireAboveDone) badges.append(badge(tr('chores.waits')));
+    if (chore.unlockDelayMinutes) badges.append(badge(tr('chores.hasDelay', { minutes: chore.unlockDelayMinutes })));
+    if (chore.requireWebhookUnlock) badges.append(badge(tr('chores.hasUnlock')));
     if (chore.webhookUrl || chore.resetWebhookUrl) badges.append(badge(tr('chores.hasWebhook')));
     main.append(badges);
   }
@@ -347,6 +349,9 @@ function editor(chore, data, signal, token, container) {
   });
   const active = toggleField(tr('chores.field.active'), chore ? chore.active !== false : true);
   const above = toggleField(tr('chores.field.requireAbove'), chore?.requireAboveDone === true);
+  const delay = input(chore?.unlockDelayMinutes ? String(chore.unlockDelayMinutes) : '0', 'text');
+  delay.inputMode = 'numeric';
+  const unlockGate = toggleField(tr('chores.field.requireUnlock'), chore?.requireWebhookUnlock === true);
   const members = memberPicker(chore, data);
   const webhook = input(chore?.webhookUrl || '', 'url');
   const reset = input(chore?.resetWebhookUrl || '', 'url');
@@ -361,6 +366,9 @@ function editor(chore, data, signal, token, container) {
     field(tr('chores.field.days'), dayBox),
     active.wrap,
     above.wrap,
+    field(tr('chores.field.unlockDelay'), delay, tr('chores.field.unlockDelayHint')),
+    unlockGate.wrap,
+    unlockInfoBox(chore),
     members.field,
     field(tr('chores.field.webhook'), webhook),
     field(tr('chores.field.resetWebhook'), reset),
@@ -389,12 +397,19 @@ function editor(chore, data, signal, token, container) {
       showToast(tr('reasons.invalid'), 'error');
       return;
     }
+    const delayMinutes = strictInt(delay.value);
+    if (delayMinutes == null || delayMinutes > 24 * 60) {
+      showToast(tr('reasons.invalid'), 'error');
+      return;
+    }
     const body = {
       title: title.value,
       points: value,
       days: WEEKDAYS.filter((_, index) => dayInputs[index].checked),
       active: active.input.checked,
       requireAboveDone: above.input.checked,
+      unlockDelayMinutes: delayMinutes,
+      requireWebhookUnlock: unlockGate.input.checked,
       ...(members.ids ? { assigneeIds: members.ids() } : {}),
       webhookUrl: webhook.value,
       resetWebhookUrl: reset.value,
@@ -488,6 +503,39 @@ function hint(text) {
   el.className = 'form-hint';
   el.textContent = text;
   return el;
+}
+
+function unlockInfoBox(chore) {
+  const wrap = document.createElement('div');
+  wrap.className = 'kc-info-box';
+  if (!chore?.requireWebhookUnlock || !chore.unlockToken) {
+    const note = document.createElement('p');
+    note.className = 'kc-info-box__text';
+    note.textContent = tr('chores.unlockHint');
+    wrap.append(note);
+    return wrap;
+  }
+  const intro = document.createElement('p');
+  intro.className = 'kc-info-box__text';
+  intro.textContent = tr('chores.unlockInfoIntro');
+  const path = document.createElement('p');
+  path.className = 'kc-info-box__label';
+  path.textContent = tr('chores.unlockInfoPath');
+  const pathCode = document.createElement('pre');
+  pathCode.className = 'kc-info-box__code';
+  pathCode.textContent = '/api/v1/kids-chores/unlock';
+  const bodyLabel = document.createElement('p');
+  bodyLabel.className = 'kc-info-box__label';
+  bodyLabel.textContent = tr('chores.unlockInfoBody');
+  const bodyCode = document.createElement('pre');
+  bodyCode.className = 'kc-info-box__code';
+  bodyCode.textContent = JSON.stringify({
+    token: chore.unlockToken,
+    state: 'yes',
+    done: true,
+  }, null, 2);
+  wrap.append(intro, path, pathCode, bodyLabel, bodyCode);
+  return wrap;
 }
 
 /** Reward webhook field with an info panel that shows the Homey JSON shape. */
