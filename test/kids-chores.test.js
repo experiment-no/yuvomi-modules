@@ -1015,6 +1015,7 @@ test('a member check-off is saved and an administrator session sends the same we
     assert.equal(adminLog.content.includes('"pending"'), false);
 
     who = { id: 2, role: 'member', name: 'Bea' };
+    storage.removeItem('kids-chores.webhook-delivered.v1');
     let memberTries = 0;
     const child = clientFor(async () => {
       memberTries += 1;
@@ -1038,6 +1039,94 @@ test('a member check-off is saved and an administrator session sends the same we
     assert.equal(cleared.pending, undefined);
     await admin.today();
     assert.equal(sent.length, 2);
+  } finally {
+    globalThis.localStorage = previousStorage;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('a stuck outbox item is not flushed twice after Homey already got it', async () => {
+  const notes = [];
+  const writes = [];
+  const sent = [];
+  let who = { id: 1, role: 'admin', name: 'Ada' };
+  const api = fakeNotes(notes, writes, () => who);
+  const storage = memoryStorage();
+  const previousStorage = globalThis.localStorage;
+  const previousFetch = globalThis.fetch;
+  globalThis.localStorage = storage;
+  globalThis.fetch = async () => { throw new TypeError('network'); };
+  const payload = { event: 'ella_checkin', state: 'yes', done: true, points: 5 };
+  const clientFor = (relay) => createClient({
+    loadApi: async () => ({ api }),
+    now: () => FRIDAY,
+    relay,
+  });
+  try {
+    const admin = clientFor(async () => false);
+    const generic = await admin.createChore({
+      title: 'Tømme sekken',
+      points: 5,
+      days: [5],
+      assigneeIds: [],
+      webhookUrl: HOMEY,
+    });
+
+    who = { id: 2, role: 'member', name: 'Bea' };
+    const child = clientFor(async () => false);
+    await child.complete(generic.chore.id);
+    const childLog = notes.find((note) => String(note.created_by) === '2');
+    const stored = JSON.parse(childLog.content.split('\n').slice(2).join('\n'));
+    assert.equal(stored.pending.length, 1);
+    const stuckId = stored.pending[0].id;
+
+    who = { id: 1, role: 'admin', name: 'Ada' };
+    const originalPut = api.put.bind(api);
+    api.put = async (path, body, opts) => {
+      const noteId = String(path).split('/').pop();
+      const note = notes.find((entry) => String(entry.id) === noteId);
+      if (note && String(note.created_by) !== '1') {
+        throw Object.assign(new Error('not owner'), { status: 403 });
+      }
+      return originalPut(path, body, opts);
+    };
+
+    storage.removeItem('kids-chores.webhook-delivered.v1');
+    const flusher = clientFor(async (url, body) => {
+      sent.push({ url, payload: body });
+      return true;
+    });
+    await flusher.today();
+    assert.deepEqual(sent, [{ url: HOMEY, payload }]);
+
+    // Member note still has the pending row; ack on the shared state must stop a resend.
+    childLog.content = `${childLog.content.split('\n').slice(0, 2).join('\n')}\n${JSON.stringify({
+      ...stored,
+      pending: [{ id: stuckId, url: HOMEY, payload }],
+    })}`;
+    storage.removeItem('kids-chores.webhook-delivered.v1');
+    await flusher.today();
+    assert.equal(sent.length, 1);
+
+    // A live retry in the same browser is debounced.
+    who = { id: 2, role: 'member', name: 'Bea' };
+    let relayCalls = 0;
+    const again = createClient({
+      loadApi: async () => ({ api }),
+      now: () => FRIDAY,
+      relay: async () => false,
+      memberRelay: async (url, body) => {
+        relayCalls += 1;
+        sent.push({ url, payload: body });
+        return { status: 200, body: { ok: true } };
+      },
+    });
+    storage.setItem('kids-chores.webhook-delivered.v1', JSON.stringify({
+      [`${HOMEY}\n${JSON.stringify(payload)}`]: Date.now(),
+    }));
+    await again.complete(generic.chore.id);
+    assert.equal(relayCalls, 0);
+    assert.equal(sent.length, 1);
   } finally {
     globalThis.localStorage = previousStorage;
     globalThis.fetch = previousFetch;
