@@ -1299,43 +1299,6 @@ test('a delay keeps the next chore locked until the minutes have passed', async 
   assert.equal(finish.status, 200);
 });
 
-test('a webhook unlock makes the chore visible, with Homey-shaped JSON', async () => {
-  let state = defaultState();
-  const created = await ask(state, 'POST', '/chores', {
-    title: 'Backpack',
-    points: 2,
-    days: [5],
-    requireWebhookUnlock: true,
-  });
-  state = created.state;
-  const chore = created.body.chore;
-  assert.equal(chore.requireWebhookUnlock, true);
-  assert.ok(chore.unlockToken);
-  assert.match(chore.unlockToken, /^kc_[A-Za-z0-9]+$/);
-
-  const today = await ask(state, 'GET', '/today');
-  assert.equal(today.body.items[0].locked, true);
-  assert.equal(today.body.items[0].lockReason, 'webhook');
-  assert.equal(today.body.open.length, 0);
-
-  const denied = await ask(state, 'POST', '/complete', { id: chore.id });
-  assert.equal(denied.status, 409);
-  assert.equal(denied.body.reason, 'locked');
-
-  const unlocked = await ask(state, 'POST', '/unlock', {
-    token: chore.unlockToken,
-    state: 'yes',
-    done: true,
-  });
-  assert.equal(unlocked.status, 200);
-  assert.equal(unlocked.body.items[0].locked, false);
-  state = unlocked.state;
-
-  const done = await ask(state, 'POST', '/complete', { id: chore.id });
-  assert.equal(done.status, 200);
-  assert.equal(done.body.items[0].done, true);
-});
-
 function fakeNotes(notes, writes, session) {
   let nextId = 1;
   const me = () => session();

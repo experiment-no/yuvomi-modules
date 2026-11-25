@@ -70,11 +70,11 @@ function draw(container, data, signal, token) {
   root.append(toolbar, body);
   container.replaceChildren(root);
   armMidnight(container, signal, token, data.settings.timezone);
-  armUnlock(container, signal, token, data);
+  armDelay(container, signal, token, data);
 }
 
-function armUnlock(container, signal, token, data) {
-  clearTimeout(container._kcUnlock);
+function armDelay(container, signal, token, data) {
+  clearTimeout(container._kcDelay);
   let soonest = Infinity;
   for (const board of boardsOf(data)) {
     for (const item of board.items || []) {
@@ -85,12 +85,12 @@ function armUnlock(container, signal, token, data) {
   }
   if (!Number.isFinite(soonest) || soonest === Infinity) return;
   const delay = Math.max(500, soonest - Date.now() + 250);
-  container._kcUnlock = setTimeout(() => {
+  container._kcDelay = setTimeout(() => {
     if (!stopped(container, signal, token)) void paint(container, signal, token);
   }, delay);
-  if (signal && !container._kcUnlockAbort) {
-    container._kcUnlockAbort = true;
-    signal.addEventListener('abort', () => clearTimeout(container._kcUnlock), { once: true });
+  if (signal && !container._kcDelayAbort) {
+    container._kcDelayAbort = true;
+    signal.addEventListener('abort', () => clearTimeout(container._kcDelay), { once: true });
   }
 }
 

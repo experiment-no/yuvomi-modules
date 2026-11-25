@@ -396,7 +396,6 @@ function documentFrom(data, doneNotes) {
       chores: data?.chores || [],
       completions: data?.legacyCompletions || {},
       goals: data?.legacyGoals || {},
-      unlocks: data?.legacyUnlocks || {},
     },
     subscriptions: data?.subscriptions || {},
   });
@@ -457,20 +456,6 @@ function applySlice(doc, userId, slice) {
       };
     }
   }
-  for (const [date, map] of Object.entries(slice.unlocks || {})) {
-    if (!map || typeof map !== 'object') continue;
-    const day = { ...(doc.shared.unlocks?.[date] || {}) };
-    for (const [choreId, entry] of Object.entries(map)) {
-      const current = day[choreId];
-      if (current && typeof current.at === 'string') {
-        day[choreId] = { '*': { at: current.at, by: current.by }, [userId]: entry };
-      } else {
-        day[choreId] = { ...(current && typeof current === 'object' ? current : {}), [userId]: entry };
-      }
-    }
-    if (!doc.shared.unlocks) doc.shared.unlocks = {};
-    doc.shared.unlocks[date] = day;
-  }
 }
 
 function pack(doc, notes, actorId) {
@@ -505,7 +490,6 @@ function pack(doc, notes, actorId) {
   const legacy = legacyOf(doc, share);
   if (Object.keys(legacy.completions).length) state.legacyCompletions = legacy.completions;
   if (Object.keys(legacy.goals).length) state.legacyGoals = legacy.goals;
-  if (Object.keys(legacy.unlocks || {}).length) state.legacyUnlocks = legacy.unlocks;
   if (Object.keys(carried).length) state.carried = carried;
   const delivered = compactDelivered(doc.delivered);
   if (Object.keys(delivered).length) state.delivered = delivered;
@@ -529,9 +513,6 @@ function userIds(doc, share) {
     for (const entry of Object.values(map || {})) collectIds(entry, ids);
   }
   for (const entry of Object.values(doc.shared.goals || {})) collectIds(entry, ids);
-  for (const map of Object.values(doc.shared.unlocks || {})) {
-    for (const entry of Object.values(map || {})) collectIds(entry, ids);
-  }
   return [...ids];
 }
 
@@ -545,13 +526,12 @@ function collectIds(entry, ids) {
 function sliceFor(doc, userId, share) {
   const pending = cleanPendingList(doc.outbox?.[userId]);
   if (!share) {
-    const bucket = doc.private?.[userId] || { chores: [], completions: {}, goals: {}, unlocks: {} };
+    const bucket = doc.private?.[userId] || { chores: [], completions: {}, goals: {} };
     const slice = {
       private: {
         chores: (bucket.chores || []).map(compactChore),
         completions: bucket.completions || {},
         goals: bucket.goals || {},
-        unlocks: bucket.unlocks || {},
       },
     };
     if (pending.length) slice.pending = pending;
@@ -561,7 +541,6 @@ function sliceFor(doc, userId, share) {
   }
   const completions = {};
   const goals = {};
-  const unlocks = {};
   for (const [date, map] of Object.entries(doc.shared.completions || {})) {
     for (const [choreId, entry] of Object.entries(map || {})) {
       if (!entry || typeof entry !== 'object' || typeof entry.at === 'string') continue;
@@ -574,15 +553,7 @@ function sliceFor(doc, userId, share) {
     if (!entry || typeof entry !== 'object' || typeof entry.at === 'string') continue;
     if (entry[userId]) goals[date] = entry[userId];
   }
-  for (const [date, map] of Object.entries(doc.shared.unlocks || {})) {
-    for (const [choreId, entry] of Object.entries(map || {})) {
-      if (!entry || typeof entry !== 'object' || typeof entry.at === 'string') continue;
-      if (!entry[userId]) continue;
-      if (!unlocks[date]) unlocks[date] = {};
-      unlocks[date][choreId] = entry[userId];
-    }
-  }
-  const slice = { completions, goals, unlocks };
+  const slice = { completions, goals };
   if (pending.length) slice.pending = pending;
   const sent = compactDelivered(doc.delivered);
   if (Object.keys(sent).length) slice.sent = sent;
@@ -592,8 +563,7 @@ function sliceFor(doc, userId, share) {
 function legacyOf(doc, share) {
   const completions = {};
   const goals = {};
-  const unlocks = {};
-  if (!share) return { completions, goals, unlocks };
+  if (!share) return { completions, goals };
   for (const [date, map] of Object.entries(doc.shared.completions || {})) {
     for (const [choreId, entry] of Object.entries(map || {})) {
       if (!entry || typeof entry !== 'object') continue;
@@ -611,19 +581,7 @@ function legacyOf(doc, share) {
     if (typeof entry.at === 'string') goals[date] = { at: entry.at, earned: entry.earned, notified: entry.notified === true };
     else if (entry['*']) goals[date] = { '*': entry['*'] };
   }
-  for (const [date, map] of Object.entries(doc.shared.unlocks || {})) {
-    for (const [choreId, entry] of Object.entries(map || {})) {
-      if (!entry || typeof entry !== 'object') continue;
-      if (typeof entry.at === 'string') {
-        if (!unlocks[date]) unlocks[date] = {};
-        unlocks[date][choreId] = { at: entry.at, by: entry.by };
-      } else if (entry['*']) {
-        if (!unlocks[date]) unlocks[date] = {};
-        unlocks[date][choreId] = { '*': entry['*'] };
-      }
-    }
-  }
-  return { completions, goals, unlocks };
+  return { completions, goals };
 }
 
 function compactChore(chore) {
@@ -637,8 +595,6 @@ function compactChore(chore) {
   if (chore.active === false) out.active = false;
   if (chore.requireAboveDone) out.requireAboveDone = true;
   if (chore.unlockDelayMinutes) out.unlockDelayMinutes = chore.unlockDelayMinutes;
-  if (chore.requireWebhookUnlock) out.requireWebhookUnlock = true;
-  if (chore.unlockToken) out.unlockToken = chore.unlockToken;
   if (chore.webhookUrl) out.webhookUrl = chore.webhookUrl;
   if (chore.resetWebhookUrl) out.resetWebhookUrl = chore.resetWebhookUrl;
   if (Array.isArray(chore.assigneeIds)) out.assigneeIds = [...chore.assigneeIds];
@@ -664,9 +620,7 @@ function emptySlice(slice) {
       && !Object.keys(bucket.completions || {}).length
       && !Object.keys(bucket.goals || {}).length;
   }
-  return !Object.keys(slice.completions || {}).length
-    && !Object.keys(slice.goals || {}).length
-    && !Object.keys(slice.unlocks || {}).length;
+  return !Object.keys(slice.completions || {}).length && !Object.keys(slice.goals || {}).length;
 }
 
 function doneNote(notes, userId) {
