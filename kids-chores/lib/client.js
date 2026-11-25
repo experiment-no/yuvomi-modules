@@ -6,12 +6,15 @@
  * from the service is shown.
  */
 
-import { HouseholdError, actorFromMe, runHousehold } from './household.js';
+import { HouseholdError, actorFromMe, deliveryPrint, runHousehold } from './household.js';
 import { PREFIX, commit, handle, openDocument, project } from './logic.js';
 import { postWebhook } from './webhook.js';
 
 const STORAGE_KEY = 'kids-chores.state.v1';
+const DELIVERED_KEY = 'kids-chores.webhook-delivered.v1';
 const CSRF_HEADER = 'X-Kids-Chores-CSRF';
+const DELIVERED_TTL_MS = 2 * 60 * 1000;
+const DELIVERED_MAX = 40;
 
 const ABSENT_STATUS = new Set([404, 502, 503]);
 
@@ -64,13 +67,65 @@ async function memberRelay(url, payload, loadApi) {
   if (!api || typeof api.post !== 'function') return null;
   try {
     const body = await api.post('/kids-chores/webhook', { url, payload });
+    // A resolved post means Homey was already contacted. Treat any shape as
+    // delivered so we never queue a second copy of the same JSON.
     const result = body?.data && typeof body.data === 'object' ? body.data : body;
-    if (!result || typeof result.status !== 'number') return null;
-    return { status: result.status, body: result.body ?? '' };
+    if (result && typeof result.status === 'number') {
+      return { status: result.status, body: result.body ?? '' };
+    }
+    return { status: 204, body: '' };
   } catch (err) {
     if (err?.name === 'AbortError') throw err;
     return null;
   }
+}
+
+function readDeliveredLedger() {
+  try {
+    const raw = localStorage.getItem(DELIVERED_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeDeliveredLedger(ledger) {
+  try {
+    localStorage.setItem(DELIVERED_KEY, JSON.stringify(ledger));
+  } catch {
+    /* private mode still leaves the in-memory path */
+  }
+}
+
+function pruneDeliveredLedger(ledger, now = Date.now()) {
+  const keep = {};
+  for (const [print, at] of Object.entries(ledger)) {
+    const stamp = Number(at);
+    if (!Number.isFinite(stamp)) continue;
+    if (now - stamp > DELIVERED_TTL_MS) continue;
+    if (typeof print !== 'string' || !print || print.length > 2200) continue;
+    keep[print] = stamp;
+  }
+  const entries = Object.entries(keep).sort((a, b) => a[1] - b[1]);
+  return Object.fromEntries(entries.slice(-DELIVERED_MAX));
+}
+
+/** True when this browser already posted the same Homey JSON recently. */
+export function wasDeliveredLocally(url, payload, now = Date.now()) {
+  const print = deliveryPrint(url, payload);
+  if (!print) return false;
+  const ledger = pruneDeliveredLedger(readDeliveredLedger(), now);
+  return Number.isFinite(Number(ledger[print]));
+}
+
+export function markDeliveredLocally(url, payload, now = Date.now()) {
+  const print = deliveryPrint(url, payload);
+  if (!print) return;
+  const ledger = pruneDeliveredLedger(readDeliveredLedger(), now);
+  ledger[print] = now;
+  writeDeliveredLedger(pruneDeliveredLedger(ledger, now));
 }
 
 /**
@@ -140,17 +195,26 @@ export function createClient(options = {}) {
   let seeded = false;
 
   async function deliverWebhook(url, payload, signal) {
+    if (wasDeliveredLocally(url, payload)) return { status: 204, body: '' };
     try {
-      return await postWebhook(url, payload, signal);
+      const sent = await postWebhook(url, payload, signal);
+      markDeliveredLocally(url, payload);
+      return sent;
     } catch (err) {
       if (err?.name === 'AbortError') throw err;
       try {
         const sent = await memberSend(url, payload);
-        if (sent) return sent;
+        if (sent) {
+          markDeliveredLocally(url, payload);
+          return sent;
+        }
       } catch (relayError) {
         if (relayError?.name === 'AbortError') throw relayError;
       }
-      if (await relayWebhook(url, payload)) return { status: 204, body: '' };
+      if (await relayWebhook(url, payload)) {
+        markDeliveredLocally(url, payload);
+        return { status: 204, body: '' };
+      }
       throw err;
     }
   }
@@ -159,20 +223,30 @@ export function createClient(options = {}) {
    * One leave only. Prefer the Kids Chores relay (admin and member). The
    * notification-channel path is admin-only and can throw after Homey already
    * accepted the POST; trying it first then falling through sent the same
-   * JSON twice.
+   * JSON twice. A local ledger blocks the same JSON from leaving again when
+   * a click is retried or an outbox item is flushed after a live send.
    */
   async function sendForHousehold(url, payload, signal) {
+    if (wasDeliveredLocally(url, payload)) return { status: 204, body: '' };
     try {
-      return await postWebhook(url, payload, signal);
+      const sent = await postWebhook(url, payload, signal);
+      markDeliveredLocally(url, payload);
+      return sent;
     } catch (err) {
       if (err?.name === 'AbortError') throw err;
       try {
         const sent = await memberSend(url, payload);
-        if (sent) return sent;
+        if (sent) {
+          markDeliveredLocally(url, payload);
+          return sent;
+        }
       } catch (relayError) {
         if (relayError?.name === 'AbortError') throw relayError;
       }
-      if (await relay(url, payload)) return { status: 204, body: '' };
+      if (await relay(url, payload)) {
+        markDeliveredLocally(url, payload);
+        return { status: 204, body: '' };
+      }
       return null;
     }
   }

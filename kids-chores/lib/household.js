@@ -87,13 +87,18 @@ export async function runHousehold(options) {
     postWebhook: async (url, payload) => {
       if (typeof options.trySend === 'function') {
         const sent = await options.trySend(url, payload);
-        if (sent) return sent;
+        if (sent) {
+          // A live leave replaces any queued copy of the same Homey JSON.
+          dropPendingByPrint(doc, deliveryPrint(url, payload));
+          return sent;
+        }
       } else if (typeof options.postWebhook === 'function') {
         return options.postWebhook(url, payload);
       }
       if (doc.settings.shareAcrossUsers === false) throw new Error('webhook');
       const item = pendingItem(url, payload);
       if (!item) throw new Error('webhook');
+      if (isDelivered(doc, item.id)) return { status: 204, body: '' };
       queued.push(item);
       return { status: 204, body: '' };
     },
@@ -160,6 +165,7 @@ async function persist(options, doc, before, notes) {
     ? { ...after.state, carried: { ...(after.state.carried || {}), ...carried } }
     : after.state;
   const stateChanged = !same(before.state, state);
+  const meaningfulStateChange = !same(withoutDelivered(before.state), withoutDelivered(state));
   const creating = !stateNote && countChores(doc) > 0;
   if (!creating && !stateChanged) {
     if (Object.keys(carried).length) throw new HouseholdError('forbidden', 403);
@@ -168,7 +174,11 @@ async function persist(options, doc, before, notes) {
   const canWriteState = !stateNote
     || actor.role === 'admin'
     || String(stateNote.created_by) === actor.id;
-  const required = creating || (stateChanged && options.method !== 'GET') || Object.keys(carried).length > 0;
+  // Members persist delivery acks on their own log note. A delivered-only
+  // change on the shared state note must not block their check-off.
+  const required = creating
+    || (meaningfulStateChange && options.method !== 'GET')
+    || Object.keys(carried).length > 0;
   if (!canWriteState) {
     if (required) throw new HouseholdError('forbidden', 403);
     return;
@@ -252,6 +262,7 @@ async function flushOutbox(doc, trySend) {
   for (const userId of Object.keys(doc.outbox)) {
     const left = [];
     for (const item of doc.outbox[userId]) {
+      if (isDelivered(doc, item.id)) continue;
       let sent = null;
       try {
         sent = await trySend(item.url, item.payload);
@@ -260,6 +271,7 @@ async function flushOutbox(doc, trySend) {
         sent = null;
       }
       if (sent == null) left.push(item);
+      else rememberDelivery(doc, item.id);
     }
     if (left.length) doc.outbox[userId] = left;
     else delete doc.outbox[userId];
@@ -268,14 +280,67 @@ async function flushOutbox(doc, trySend) {
 
 function appendOutbox(doc, userId, items) {
   if (!ID_RE.test(userId)) return;
-  const next = cleanPendingList([...(doc.outbox?.[userId] || []), ...items]).slice(-20);
-  if (!next.length) return;
+  const existing = doc.outbox?.[userId] || [];
+  const seen = new Set(existing.map((item) => deliveryPrint(item.url, item.payload)).filter(Boolean));
+  const merged = [...existing];
+  for (const item of cleanPendingList(items)) {
+    const print = deliveryPrint(item.url, item.payload);
+    if (print && (seen.has(print) || isDelivered(doc, print))) continue;
+    if (print) seen.add(print);
+    merged.push(item);
+  }
+  const next = merged.slice(-20);
+  if (!next.length) {
+    if (doc.outbox) delete doc.outbox[userId];
+    return;
+  }
   if (!doc.outbox) doc.outbox = {};
   doc.outbox[userId] = next;
 }
 
 function pendingItem(url, payload) {
   return cleanPendingItem({ id: pendingId(), url, payload });
+}
+
+/** Fingerprint for matching a live leave to a queued copy of the same JSON. */
+export function deliveryPrint(url, payload) {
+  if (typeof url !== 'string' || !url) return '';
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return '';
+  try {
+    return `${url}\n${JSON.stringify(payload)}`;
+  } catch {
+    return '';
+  }
+}
+
+function isDelivered(doc, id) {
+  return Boolean(id && doc.delivered?.[id]);
+}
+
+function rememberDelivery(doc, id) {
+  if (typeof id !== 'string' || !ID_RE.test(id)) return;
+  if (!doc.delivered || typeof doc.delivered !== 'object') doc.delivered = {};
+  doc.delivered[id] = Date.now();
+  const keys = Object.keys(doc.delivered);
+  if (keys.length <= 40) return;
+  keys.sort((a, b) => doc.delivered[a] - doc.delivered[b]);
+  for (const key of keys.slice(0, keys.length - 40)) delete doc.delivered[key];
+}
+
+function dropPendingByPrint(doc, print) {
+  if (!print || !doc.outbox) return;
+  for (const userId of Object.keys(doc.outbox)) {
+    const left = [];
+    for (const item of doc.outbox[userId] || []) {
+      if (deliveryPrint(item.url, item.payload) === print) {
+        rememberDelivery(doc, item.id);
+        continue;
+      }
+      left.push(item);
+    }
+    if (left.length) doc.outbox[userId] = left;
+    else delete doc.outbox[userId];
+  }
 }
 
 function pendingId() {
@@ -308,8 +373,11 @@ function cleanPendingItem(item) {
 }
 
 function rememberPending(doc, userId, pending) {
-  const items = cleanPendingList(pending);
-  if (!items.length) return;
+  const items = cleanPendingList(pending).filter((item) => !isDelivered(doc, item.id));
+  if (!items.length) {
+    if (doc.outbox) delete doc.outbox[userId];
+    return;
+  }
   if (!doc.outbox) doc.outbox = {};
   doc.outbox[userId] = items;
 }
@@ -331,6 +399,7 @@ function documentFrom(data, doneNotes) {
     },
     subscriptions: data?.subscriptions || {},
   });
+  loadDelivered(doc, data?.delivered);
   for (const [userId, slice] of Object.entries(data?.carried || {})) {
     if (ID_RE.test(userId)) applySlice(doc, userId, slice);
   }
@@ -342,8 +411,21 @@ function documentFrom(data, doneNotes) {
   return doc;
 }
 
+function loadDelivered(doc, raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
+  if (!doc.delivered || typeof doc.delivered !== 'object') doc.delivered = {};
+  for (const [id, at] of Object.entries(raw)) {
+    if (!ID_RE.test(id)) continue;
+    const stamp = Number(at);
+    if (!Number.isFinite(stamp)) continue;
+    const previous = Number(doc.delivered[id]);
+    doc.delivered[id] = Number.isFinite(previous) ? Math.max(previous, stamp) : stamp;
+  }
+}
+
 function applySlice(doc, userId, slice) {
   if (!slice || typeof slice !== 'object') return;
+  if (slice.sent) loadDelivered(doc, slice.sent);
   rememberPending(doc, userId, slice.pending);
   if (slice.private) {
     const wrapped = openDocument({ version: 2, private: { [userId]: slice.private } });
@@ -409,7 +491,19 @@ function pack(doc, notes, actorId) {
   if (Object.keys(legacy.completions).length) state.legacyCompletions = legacy.completions;
   if (Object.keys(legacy.goals).length) state.legacyGoals = legacy.goals;
   if (Object.keys(carried).length) state.carried = carried;
+  const delivered = compactDelivered(doc.delivered);
+  if (Object.keys(delivered).length) state.delivered = delivered;
   return { state, dones };
+}
+
+function compactDelivered(delivered) {
+  if (!delivered || typeof delivered !== 'object') return {};
+  const entries = Object.entries(delivered)
+    .filter(([id, at]) => ID_RE.test(id) && Number.isFinite(Number(at)))
+    .map(([id, at]) => [id, Number(at)])
+    .sort((a, b) => a[1] - b[1])
+    .slice(-40);
+  return Object.fromEntries(entries);
 }
 
 function userIds(doc, share) {
@@ -441,6 +535,8 @@ function sliceFor(doc, userId, share) {
       },
     };
     if (pending.length) slice.pending = pending;
+    const sent = compactDelivered(doc.delivered);
+    if (Object.keys(sent).length) slice.sent = sent;
     return slice;
   }
   const completions = {};
@@ -459,6 +555,8 @@ function sliceFor(doc, userId, share) {
   }
   const slice = { completions, goals };
   if (pending.length) slice.pending = pending;
+  const sent = compactDelivered(doc.delivered);
+  if (Object.keys(sent).length) slice.sent = sent;
   return slice;
 }
 
@@ -514,6 +612,7 @@ function compactSubs(subscriptions) {
 function emptySlice(slice) {
   if (!slice) return true;
   if (slice.pending?.length) return false;
+  if (slice.sent && Object.keys(slice.sent).length) return false;
   if (slice.private) {
     const bucket = slice.private;
     return !bucket.chores?.length
@@ -555,4 +654,10 @@ function markOf(content, mark) {
 
 function same(left, right) {
   return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+function withoutDelivered(state) {
+  if (!state || typeof state !== 'object') return state;
+  const { delivered, ...rest } = state;
+  return rest;
 }

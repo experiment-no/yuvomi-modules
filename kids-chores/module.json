@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "kids-chores",
   "name": "Kids Chores",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "A household chore list shared with every signed-in member. A chore can be generic, or linked to a child. Parents follow the children they choose.",
   "entry": "index.js",
   "style": "style.css",
