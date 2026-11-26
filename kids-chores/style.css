@@ -100,7 +100,7 @@ button.kc-chore:focus-visible {
 }
 
 .kc-chore--compact {
-  padding: calc(0.45rem + 2.5px) 0.65rem;
+  padding: calc(0.45rem + 7.5px) 0.65rem;
 }
 
 .kc-settings {
