@@ -160,6 +160,9 @@ function widgetBoard(board, view, signal, token, container) {
     for (const item of boardOpen) {
       const row = document.createElement(canWrite ? 'button' : 'div');
       row.className = 'kc-chore kc-chore--compact';
+      // Inline so a stale stylesheet cannot keep the old compact height.
+      row.style.minHeight = 'calc(2.125rem + 15px)';
+      row.style.boxSizing = 'border-box';
       if (canWrite) {
         row.type = 'button';
         listen(row, 'click', () => {
