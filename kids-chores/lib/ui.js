@@ -8,7 +8,9 @@ import { t } from '/i18n.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 
-export const STYLE_HREF = '/api/v1/modules/assets/kids-chores/style.css';
+/** Bump with module.json version so overview reloads pick up CSS after a zip update. */
+export const STYLE_VERSION = '1.0.23';
+export const STYLE_HREF = `/api/v1/modules/assets/kids-chores/style.css?v=${STYLE_VERSION}`;
 
 export function key(name) {
   return `extensions.kids-chores.${name}`;
@@ -18,7 +20,18 @@ export function tr(name, params) {
   return t(key(name), params);
 }
 
+function dropStaleStyle(href) {
+  if (typeof document === 'undefined' || !document.head) return;
+  for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
+    const current = link.getAttribute('href') || '';
+    if (current.includes('/modules/assets/kids-chores/style.css') && current !== href) {
+      link.remove();
+    }
+  }
+}
+
 export async function ensureStyle(href = STYLE_HREF) {
+  dropStaleStyle(href);
   try {
     const mod = await import('/utils/component-style.js');
     if (typeof mod.ensureStyle === 'function') {

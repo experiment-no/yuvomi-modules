@@ -99,7 +99,10 @@ button.kc-chore:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-.kc-chore--compact {
+/* Overview rows: base was ~2.125rem tall; +15px from the two height bumps. */
+.kc-widget .kc-chore.kc-chore--compact {
+  box-sizing: border-box;
+  min-height: calc(2.125rem + 15px);
   padding: calc(0.45rem + 7.5px) 0.65rem;
 }
 
